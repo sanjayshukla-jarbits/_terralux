@@ -1,0 +1,471 @@
+{
+  "process_info": {
+    "name": "Multi-Source Data Acquisition - Fail Fast",
+    "version": "1.0.0-dev",
+    "application_type": "data_acquisition",
+    "description": "Optimized multi-source data acquisition workflow for rapid development and testing",
+    "author": "Orchestrator Development Team",
+    "created_date": "2025-07-30T00:00:00Z",
+    "tags": [
+      "data_acquisition",
+      "multi_source", 
+      "fail_fast",
+      "development",
+      "testing"
+    ],
+    "estimated_execution_time": "8-15 minutes",
+    "resource_requirements": {
+      "memory": "2GB",
+      "cpu_cores": 2,
+      "disk_space": "1GB",
+      "network_required": true
+    }
+  },
+
+  "global_config": {
+    "template_variables": {
+      "bbox": "{bbox}",
+      "start_date": "{start_date}",
+      "end_date": "{end_date}",
+      "area_name": "{area_name}",
+      "local_data_path": "{local_data_path}",
+      "output_dir": "{output_dir}"
+    },
+    "default_values": {
+      "bbox": [85.30, 27.60, 85.32, 27.62],
+      "start_date": "2023-06-01",
+      "end_date": "2023-06-07",
+      "area_name": "fail_fast_test",
+      "local_data_path": "/tmp/test_data",
+      "output_dir": "outputs/fail_fast_test/multi_source"
+    },
+    "output_directory": "outputs/{area_name}/multi_source",
+    "temp_directory": "temp/{area_name}",
+    "log_level": "DEBUG",
+    "error_handling": {
+      "strategy": "continue_on_error",
+      "retry_attempts": 1,
+      "retry_delay": 10,
+      "fallback_to_mock": true
+    },
+    "data_integration": {
+      "harmonize_crs": true,
+      "target_crs": "EPSG:4326",
+      "spatial_alignment": true,
+      "temporal_synchronization": true,
+      "target_resolution": 60
+    },
+    "performance_optimization": {
+      "enable_caching": true,
+      "parallel_processing": true,
+      "max_workers": 2,
+      "timeout_buffer": 1.2
+    },
+    "testing": {
+      "fail_fast_mode": true,
+      "mock_data_enabled": true,
+      "validation_level": "basic",
+      "performance_monitoring": true
+    }
+  },
+
+  "steps": [
+    {
+      "id": "acquire_sentinel_data",
+      "name": "Sentinel-2 Data Acquisition",
+      "type": "sentinel_hub_acquisition",
+      "description": "Acquire Sentinel-2 optical imagery with optimized parameters for testing",
+      "hyperparameters": {
+        "bbox": "{bbox}",
+        "start_date": "{start_date}",
+        "end_date": "{end_date}",
+        "data_collection": "SENTINEL-2-L2A",
+        "resolution": 60,
+        "max_cloud_coverage": 50,
+        "bands": ["B02", "B03", "B04", "B08"],
+        "save_to_file": true,
+        "output_format": "GeoTIFF",
+        "crs": "EPSG:4326",
+        "use_mock_data": true,
+        "mock_data_config": {
+          "generate_if_unavailable": true,
+          "mock_file_size": "5MB",
+          "spatial_resolution": 60
+        }
+      },
+      "inputs": {},
+      "outputs": {
+        "imagery_data": {
+          "key": "sentinel_imagery",
+          "type": "raster",
+          "description": "Sentinel-2 multispectral imagery",
+          "file_pattern": "sentinel_{area_name}_*.tif"
+        },
+        "metadata": {
+          "key": "sentinel_metadata",
+          "type": "json",
+          "description": "Imagery acquisition metadata"
+        }
+      },
+      "dependencies": [],
+      "condition": null,
+      "timeout": 300,
+      "retry_attempts": 1,
+      "fallback": {
+        "strategy": "use_mock_data",
+        "mock_data_path": "mock_data/sentinel_sample.tif"
+      }
+    },
+
+    {
+      "id": "acquire_srtm_dem",
+      "name": "SRTM DEM Acquisition",
+      "type": "dem_acquisition",
+      "description": "Acquire SRTM 90m elevation data with basic derivatives",
+      "hyperparameters": {
+        "bbox": "{bbox}",
+        "source": "SRTM",
+        "resolution": 90,
+        "generate_derivatives": true,
+        "derivatives": ["slope", "aspect"],
+        "void_fill": false,
+        "save_to_file": true,
+        "output_format": "GeoTIFF",
+        "crs": "EPSG:4326",
+        "use_mock_data": true,
+        "mock_data_config": {
+          "generate_if_unavailable": true,
+          "elevation_range": [200, 8000],
+          "add_noise": true
+        }
+      },
+      "inputs": {},
+      "outputs": {
+        "srtm_elevation": {
+          "key": "srtm_dem",
+          "type": "raster",
+          "description": "SRTM digital elevation model",
+          "file_pattern": "srtm_dem_{area_name}.tif"
+        },
+        "srtm_derivatives": {
+          "key": "srtm_derivatives",
+          "type": "raster_stack",
+          "description": "Topographic derivative layers",
+          "file_pattern": "{derivative}_{area_name}.tif"
+        },
+        "metadata": {
+          "key": "srtm_metadata",
+          "type": "json",
+          "description": "DEM acquisition metadata"
+        }
+      },
+      "dependencies": [],
+      "condition": null,
+      "timeout": 300,
+      "retry_attempts": 1,
+      "fallback": {
+        "strategy": "use_mock_data",
+        "mock_data_path": "mock_data/srtm_sample.tif"
+      }
+    },
+
+    {
+      "id": "acquire_aster_dem",
+      "name": "ASTER DEM Acquisition (Optional)",
+      "type": "dem_acquisition",
+      "description": "Acquire ASTER 30m elevation data for comparison (if available)",
+      "hyperparameters": {
+        "bbox": "{bbox}",
+        "source": "ASTER",
+        "resolution": 90,
+        "generate_derivatives": false,
+        "save_to_file": true,
+        "output_format": "GeoTIFF",
+        "crs": "EPSG:4326",
+        "use_mock_data": true,
+        "optional": true
+      },
+      "inputs": {},
+      "outputs": {
+        "aster_elevation": {
+          "key": "aster_dem",
+          "type": "raster",
+          "description": "ASTER digital elevation model",
+          "file_pattern": "aster_dem_{area_name}.tif"
+        }
+      },
+      "dependencies": [],
+      "condition": "{include_aster_dem} == true",
+      "timeout": 300,
+      "retry_attempts": 1,
+      "continue_on_failure": true
+    },
+
+    {
+      "id": "discover_local_files",
+      "name": "Local Files Discovery",
+      "type": "local_files_discovery",
+      "description": "Discover and validate local geospatial data files with mock generation",
+      "hyperparameters": {
+        "base_path": "{local_data_path}",
+        "file_patterns": ["*.tif", "*.tiff", "*.shp", "*.gpkg", "*.geojson"],
+        "recursive": true,
+        "validate_files": true,
+        "load_metadata": true,
+        "generate_mock_if_empty": true,
+        "mock_file_count": 3,
+        "mock_file_config": {
+          "raster_files": 2,
+          "vector_files": 1,
+          "file_size_range": ["1MB", "10MB"],
+          "spatial_extent": "{bbox}"
+        }
+      },
+      "inputs": {},
+      "outputs": {
+        "local_files": {
+          "key": "discovered_files",
+          "type": "file_list",
+          "description": "List of discovered local files",
+          "file_pattern": "local_*.*"
+        },
+        "file_inventory": {
+          "key": "file_inventory",
+          "type": "json",
+          "description": "Inventory of discovered files with metadata"
+        }
+      },
+      "dependencies": [],
+      "condition": null,
+      "timeout": 180,
+      "retry_attempts": 1,
+      "continue_on_failure": true
+    },
+
+    {
+      "id": "harmonize_data",
+      "name": "Data Harmonization",
+      "type": "data_harmonization",
+      "description": "Harmonize spatial reference systems and resolutions across datasets",
+      "hyperparameters": {
+        "target_crs": "EPSG:4326",
+        "target_resolution": 60,
+        "resampling_method": "bilinear",
+        "spatial_alignment": true,
+        "extent_union": true,
+        "nodata_handling": "mask",
+        "optimization": {
+          "memory_efficient": true,
+          "chunk_processing": true,
+          "compression": "lzw"
+        }
+      },
+      "inputs": {
+        "sentinel_data": {
+          "source": "acquire_sentinel_data",
+          "key": "imagery_data",
+          "required": true
+        },
+        "srtm_data": {
+          "source": "acquire_srtm_dem",
+          "key": "srtm_elevation",
+          "required": true
+        },
+        "aster_data": {
+          "source": "acquire_aster_dem",
+          "key": "aster_elevation",
+          "required": false
+        },
+        "local_files": {
+          "source": "discover_local_files",
+          "key": "local_files",
+          "required": false
+        }
+      },
+      "outputs": {
+        "harmonized_stack": {
+          "key": "harmonized_data",
+          "type": "raster_stack",
+          "description": "Harmonized multi-source data stack",
+          "file_pattern": "harmonized_stack_{area_name}.tif"
+        },
+        "harmonization_report": {
+          "key": "harmonization_metadata",
+          "type": "json",
+          "description": "Harmonization process metadata and statistics"
+        }
+      },
+      "dependencies": [
+        "acquire_sentinel_data",
+        "acquire_srtm_dem",
+        "discover_local_files"
+      ],
+      "condition": null,
+      "timeout": 600,
+      "retry_attempts": 1
+    },
+
+    {
+      "id": "calculate_indices",
+      "name": "Spectral Indices Calculation",
+      "type": "spectral_indices_calculation",
+      "description": "Calculate basic vegetation and water indices",
+      "hyperparameters": {
+        "indices": ["NDVI", "NDWI"],
+        "save_individual_indices": true,
+        "output_format": "GeoTIFF",
+        "nodata_value": -9999,
+        "compression": "lzw"
+      },
+      "inputs": {
+        "optical_data": {
+          "source": "acquire_sentinel_data",
+          "key": "imagery_data",
+          "required": true
+        }
+      },
+      "outputs": {
+        "spectral_indices": {
+          "key": "calculated_indices",
+          "type": "raster_stack",
+          "description": "Calculated spectral indices",
+          "file_pattern": "{index}_{area_name}.tif"
+        }
+      },
+      "dependencies": ["acquire_sentinel_data"],
+      "condition": null,
+      "timeout": 180,
+      "retry_attempts": 1
+    },
+
+    {
+      "id": "generate_data_inventory",
+      "name": "Data Inventory Generation",
+      "type": "inventory_generation",
+      "description": "Generate comprehensive inventory of all acquired and processed data",
+      "hyperparameters": {
+        "include_statistics": true,
+        "include_spatial_index": true,
+        "include_quality_metrics": true,
+        "generate_preview_images": false,
+        "output_format": "json",
+        "statistics_level": "basic"
+      },
+      "inputs": {
+        "all_data": {
+          "sources": [
+            "acquire_sentinel_data",
+            "acquire_srtm_dem", 
+            "discover_local_files",
+            "harmonize_data",
+            "calculate_indices"
+          ],
+          "aggregate": true
+        }
+      },
+      "outputs": {
+        "data_inventory": {
+          "key": "complete_inventory",
+          "type": "json",
+          "description": "Complete inventory of all acquired data",
+          "file_pattern": "data_inventory_{area_name}.json"
+        },
+        "processing_summary": {
+          "key": "processing_summary",
+          "type": "json",
+          "description": "Summary of processing steps and performance"
+        }
+      },
+      "dependencies": ["harmonize_data", "calculate_indices"],
+      "condition": null,
+      "timeout": 120,
+      "retry_attempts": 1
+    },
+
+    {
+      "id": "validate_outputs",
+      "name": "Output Validation",
+      "type": "data_validation",
+      "description": "Validate final outputs for quality and completeness",
+      "hyperparameters": {
+        "validation_checks": [
+          "spatial_bounds_match",
+          "data_quality_acceptable",
+          "file_integrity_verified",
+          "metadata_complete"
+        ],
+        "quality_thresholds": {
+          "min_valid_pixels_percent": 70,
+          "spatial_accuracy_tolerance": 0.2,
+          "completeness_threshold": 0.8
+        },
+        "generate_report": true,
+        "save_validation_results": true,
+        "fail_fast_on_critical": false
+      },
+      "inputs": {
+        "harmonized_data": {
+          "source": "harmonize_data",
+          "key": "harmonized_stack",
+          "required": true
+        },
+        "spectral_indices": {
+          "source": "calculate_indices",
+          "key": "spectral_indices",
+          "required": true
+        },
+        "inventory": {
+          "source": "generate_data_inventory",
+          "key": "data_inventory",
+          "required": true
+        }
+      },
+      "outputs": {
+        "validation_report": {
+          "key": "final_validation_results",
+          "type": "json",
+          "description": "Final validation report for all outputs"
+        },
+        "quality_metrics": {
+          "key": "final_quality_metrics",
+          "type": "json",
+          "description": "Comprehensive quality metrics"
+        }
+      },
+      "dependencies": [
+        "harmonize_data",
+        "calculate_indices", 
+        "generate_data_inventory"
+      ],
+      "condition": null,
+      "timeout": 180,
+      "retry_attempts": 1
+    }
+  ],
+
+  "metadata": {
+    "process_type": "multi_source_data_acquisition",
+    "complexity_level": "intermediate",
+    "testing_purpose": true,
+    "fail_fast_compatible": true,
+    "mock_data_supported": true,
+    "estimated_data_volume": "50MB-200MB",
+    "coordinate_systems": ["EPSG:4326"],
+    "data_sources": ["Sentinel-2", "SRTM", "ASTER", "Local Files"],
+    "output_formats": ["GeoTIFF", "JSON"],
+    "optimization_notes": [
+      "Reduced resolution for faster processing",
+      "Limited time range for quick execution", 
+      "Mock data fallbacks for reliability",
+      "Minimal validation for speed",
+      "Parallel processing where possible"
+    ],
+    "development_notes": {
+      "version": "fail-fast-optimized",
+      "target_execution_time": "under_15_minutes",
+      "resource_limits": "2GB_RAM_1GB_disk",
+      "test_coverage": "multi_source_integration",
+      "validation_level": "basic_functional"
+    }
+  }
+}
