@@ -1,0 +1,37 @@
+{
+  "project_info": {
+    "name": "_terralux",
+    "root_directory": "/home/ubuntu/_terralux",
+    "cache_directory": "~/.terralux_sentinel_hub/cache",
+    "credentials_directory": "~/.terralux_sentinel_hub/credentials"
+  },
+  "credentials": {
+    "client_id": "your-client-id-here",
+    "client_secret": "your-client-secret-here",
+    "instance_id": "your-instance-id-here"
+  },
+  "endpoints": {
+    "base_url": "https://services.sentinel-hub.com",
+    "auth_url": "https://services.sentinel-hub.com/auth",
+    "catalog_url": "https://services.sentinel-hub.com/api/v1/catalog",
+    "process_url": "https://services.sentinel-hub.com/api/v1/process"
+  },
+  "cache": {
+    "enabled": true,
+    "base_directory": "~/.terralux_sentinel_hub/cache",
+    "max_size_gb": 10,
+    "cleanup_older_than_days": 30,
+    "compression": "lzw"
+  },
+  "collections": {
+    "SENTINEL-2-L2A": {
+      "default_bands": ["B02", "B03", "B04", "B08"],
+      "default_resolution": 10,
+      "max_cloud_coverage": 20
+    },
+    "SENTINEL-1-GRD": {
+      "default_polarizations": ["VV", "VH"],
+      "default_resolution": 10
+    }
+  }
+}

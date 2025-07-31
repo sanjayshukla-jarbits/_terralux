@@ -1,0 +1,35 @@
+{
+  "credentials": {
+    "client_id": "your-client-id-here",
+    "client_secret": "your-client-secret-here",
+    "instance_id": "your-instance-id-here"
+  },
+  "endpoints": {
+    "base_url": "https://services.sentinel-hub.com",
+    "auth_url": "https://services.sentinel-hub.com/auth",
+    "catalog_url": "https://services.sentinel-hub.com/api/v1/catalog",
+    "process_url": "https://services.sentinel-hub.com/api/v1/process"
+  },
+  "limits": {
+    "max_requests_per_minute": 60,
+    "max_processing_units_per_month": 1000,
+    "timeout_seconds": 300,
+    "retry_attempts": 3
+  },
+  "cache": {
+    "enabled": true,
+    "max_size_gb": 10,
+    "cleanup_older_than_days": 30
+  },
+  "collections": {
+    "SENTINEL-2-L2A": {
+      "default_bands": ["B02", "B03", "B04", "B08"],
+      "default_resolution": 10,
+      "max_cloud_coverage": 20
+    },
+    "SENTINEL-1-GRD": {
+      "default_polarizations": ["VV", "VH"],
+      "default_resolution": 10
+    }
+  }
+}
