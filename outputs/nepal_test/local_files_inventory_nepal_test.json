@@ -1,0 +1,10 @@
+{
+  "step_id": "discover_local_files",
+  "step_type": "local_files_discovery",
+  "base_path": "{local_data_path}",
+  "files_discovered": [],
+  "mock_files_generated": 3,
+  "total_files": 3,
+  "mock_data": true,
+  "execution_time": "2025-07-31 13:20:20"
+}

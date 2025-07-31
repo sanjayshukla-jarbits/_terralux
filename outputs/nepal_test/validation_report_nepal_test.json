@@ -1,0 +1,24 @@
+{
+  "step_id": "validate_acquisition",
+  "step_type": "data_validation",
+  "validation_checks": [
+    "spatial_bounds_match",
+    "temporal_coverage_adequate",
+    "data_quality_acceptable",
+    "file_integrity_verified",
+    "metadata_complete"
+  ],
+  "overall_status": "PASSED",
+  "checks_passed": 5,
+  "checks_failed": 0,
+  "quality_score": 0.85,
+  "mock_validation": true,
+  "details": {
+    "spatial_bounds_match": "PASSED",
+    "temporal_coverage_adequate": "PASSED",
+    "data_quality_acceptable": "PASSED",
+    "file_integrity_verified": "PASSED",
+    "metadata_complete": "PASSED"
+  },
+  "execution_time": "2025-07-31 13:20:20"
+}

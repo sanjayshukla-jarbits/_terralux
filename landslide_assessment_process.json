@@ -1,0 +1,135 @@
+{
+  "process_info": {
+    "name": "landslide_susceptibility_assessment",
+    "version": "1.0.0",
+    "description": "Complete landslide susceptibility assessment pipeline with multi-temporal analysis",
+    "author": "_terralux Development Team",
+    "application_type": "landslide_susceptibility"
+  },
+  "global_config": {
+    "study_area": {
+      "name": "Nepal_Landslide_Assessment",
+      "bbox": [
+        85.3,
+        27.6,
+        85.35,
+        27.65
+      ],
+      "crs": "EPSG:4326"
+    },
+    "output_directory": "landslide_assessment_outputs",
+    "cache_directory": "~/.terralux_landslide_cache",
+    "log_level": "INFO"
+  },
+  "steps": [
+    {
+      "id": "sentinel2_pre_monsoon",
+      "type": "sentinel_hub_acquisition",
+      "description": "Acquire pre-monsoon baseline imagery",
+      "hyperparameters": {
+        "bbox": [
+          85.3,
+          27.6,
+          85.35,
+          27.65
+        ],
+        "start_date": "2023-04-01",
+        "end_date": "2023-05-31",
+        "data_collection": "SENTINEL-2-L2A",
+        "resolution": 20,
+        "bands": [
+          "B02",
+          "B03",
+          "B04",
+          "B08",
+          "B11",
+          "B12",
+          "SCL"
+        ],
+        "max_cloud_coverage": 30,
+        "use_real_api": true,
+        "fallback_to_mock": true
+      }
+    },
+    {
+      "id": "sentinel2_monsoon",
+      "type": "sentinel_hub_acquisition",
+      "description": "Acquire monsoon period imagery",
+      "hyperparameters": {
+        "bbox": [
+          85.3,
+          27.6,
+          85.35,
+          27.65
+        ],
+        "start_date": "2023-06-01",
+        "end_date": "2023-09-30",
+        "data_collection": "SENTINEL-2-L2A",
+        "resolution": 20,
+        "bands": [
+          "B02",
+          "B03",
+          "B04",
+          "B08",
+          "B11",
+          "B12",
+          "SCL"
+        ],
+        "max_cloud_coverage": 30,
+        "use_real_api": true,
+        "fallback_to_mock": true
+      }
+    },
+    {
+      "id": "sentinel2_post_monsoon",
+      "type": "sentinel_hub_acquisition",
+      "description": "Acquire post-monsoon assessment imagery",
+      "hyperparameters": {
+        "bbox": [
+          85.3,
+          27.6,
+          85.35,
+          27.65
+        ],
+        "start_date": "2023-10-01",
+        "end_date": "2023-11-30",
+        "data_collection": "SENTINEL-2-L2A",
+        "resolution": 20,
+        "bands": [
+          "B02",
+          "B03",
+          "B04",
+          "B08",
+          "B11",
+          "B12",
+          "SCL"
+        ],
+        "max_cloud_coverage": 30,
+        "use_real_api": true,
+        "fallback_to_mock": true
+      }
+    },
+    {
+      "id": "dem_acquisition",
+      "type": "dem_acquisition",
+      "description": "Acquire Digital Elevation Model",
+      "hyperparameters": {
+        "bbox": [
+          85.3,
+          27.6,
+          85.35,
+          27.65
+        ],
+        "data_source": "SRTM",
+        "resolution": 30,
+        "output_format": "GTiff"
+      }
+    }
+  ],
+  "execution_config": {
+    "parallel_execution": false,
+    "max_retries": 3,
+    "timeout_minutes": 60,
+    "cache_enabled": true
+  }
+}

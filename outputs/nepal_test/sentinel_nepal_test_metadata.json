@@ -1,0 +1,21 @@
+{
+  "step_id": "acquire_sentinel_data",
+  "step_type": "sentinel_hub_acquisition",
+  "bbox": [
+    85.3,
+    27.6,
+    85.4,
+    27.7
+  ],
+  "start_date": "2023-01-01",
+  "end_date": "2023-12-31",
+  "bands": [
+    "B02",
+    "B03",
+    "B04",
+    "B08"
+  ],
+  "resolution": 60,
+  "mock_data": true,
+  "execution_time": "2025-07-31 13:20:19"
+}

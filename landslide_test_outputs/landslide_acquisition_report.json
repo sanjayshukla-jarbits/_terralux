@@ -1,0 +1,183 @@
+{
+  "test_info": {
+    "test_area": {
+      "name": "Nepal_Landslide_Test_Zone",
+      "bbox": [
+        85.3,
+        27.6,
+        85.35,
+        27.65
+      ],
+      "description": "Landslide-prone area in Nepal Himalayas"
+    },
+    "test_date": "2025-07-31T09:57:44.148973",
+    "use_real_api": true,
+    "success_rate": 100.0
+  },
+  "results": {
+    "sentinel2": {
+      "pre_monsoon": {
+        "status": "completed",
+        "imagery_data": "/home/ubuntu/.terralux_landslide_cache/sentinel2/data/4b95462c4bd3911f5ec117b04e2b71d1.tif",
+        "metadata": {
+          "request_parameters": {
+            "bbox": [
+              85.3,
+              27.6,
+              85.35,
+              27.65
+            ],
+            "start_date": "2023-04-01",
+            "end_date": "2023-05-31",
+            "data_collection": "SENTINEL-2-L2A",
+            "resolution": 20,
+            "bands": [
+              "B02",
+              "B03",
+              "B04",
+              "B08",
+              "B11",
+              "B12",
+              "SCL"
+            ],
+            "max_cloud_coverage": 30,
+            "crs": "EPSG:4326",
+            "output_format": "GTiff"
+          },
+          "data_shape": [
+            274,
+            250,
+            6
+          ],
+          "data_type": "float32",
+          "download_time": "2025-07-31T09:57:39.950744",
+          "file_path": "landslide_test_outputs/sentinel2/pre_monsoon/landslide_s2_pre_monsoon_4b95462c.tif",
+          "file_size_mb": 1.4209575653076172,
+          "statistics": {
+            "min": 0.01549999974668026,
+            "max": 1.0744999647140503,
+            "mean": 0.17331472039222717,
+            "std": 0.08494552969932556
+          }
+        },
+        "cache_used": false,
+        "cache_key": "4b95462c4bd3911f5ec117b04e2b71d1",
+        "download_size_mb": 1.4209575653076172
+      },
+      "monsoon": {
+        "status": "completed",
+        "imagery_data": "/home/ubuntu/.terralux_landslide_cache/sentinel2/data/1781077c2907a305282359800a1bcd87.tif",
+        "metadata": {
+          "request_parameters": {
+            "bbox": [
+              85.3,
+              27.6,
+              85.35,
+              27.65
+            ],
+            "start_date": "2023-06-01",
+            "end_date": "2023-09-30",
+            "data_collection": "SENTINEL-2-L2A",
+            "resolution": 20,
+            "bands": [
+              "B02",
+              "B03",
+              "B04",
+              "B08",
+              "B11",
+              "B12",
+              "SCL"
+            ],
+            "max_cloud_coverage": 30,
+            "crs": "EPSG:4326",
+            "output_format": "GTiff"
+          },
+          "data_shape": [
+            274,
+            250,
+            6
+          ],
+          "data_type": "float32",
+          "download_time": "2025-07-31T09:57:41.916216",
+          "file_path": "landslide_test_outputs/sentinel2/monsoon/landslide_s2_monsoon_1781077c.tif",
+          "file_size_mb": 1.437251091003418,
+          "statistics": {
+            "min": 0.013000000268220901,
+            "max": 1.2151999473571777,
+            "mean": 0.2131444662809372,
+            "std": 0.1376684606075287
+          }
+        },
+        "cache_used": false,
+        "cache_key": "1781077c2907a305282359800a1bcd87",
+        "download_size_mb": 1.437251091003418
+      },
+      "post_monsoon": {
+        "status": "completed",
+        "imagery_data": "/home/ubuntu/.terralux_landslide_cache/sentinel2/data/6cede8ff8ed4a1d661a48a982c53591e.tif",
+        "metadata": {
+          "request_parameters": {
+            "bbox": [
+              85.3,
+              27.6,
+              85.35,
+              27.65
+            ],
+            "start_date": "2023-10-01",
+            "end_date": "2023-11-30",
+            "data_collection": "SENTINEL-2-L2A",
+            "resolution": 20,
+            "bands": [
+              "B02",
+              "B03",
+              "B04",
+              "B08",
+              "B11",
+              "B12",
+              "SCL"
+            ],
+            "max_cloud_coverage": 30,
+            "crs": "EPSG:4326",
+            "output_format": "GTiff"
+          },
+          "data_shape": [
+            274,
+            250,
+            6
+          ],
+          "data_type": "float32",
+          "download_time": "2025-07-31T09:57:44.146191",
+          "file_path": "landslide_test_outputs/sentinel2/post_monsoon/landslide_s2_post_monsoon_6cede8ff.tif",
+          "file_size_mb": 1.4016199111938477,
+          "statistics": {
+            "min": 0.01940000057220459,
+            "max": 0.9253000020980835,
+            "mean": 0.1398293823003769,
+            "std": 0.06811664253473282
+          }
+        },
+        "cache_used": false,
+        "cache_key": "6cede8ff8ed4a1d661a48a982c53591e",
+        "download_size_mb": 1.4016199111938477
+      }
+    },
+    "dem": {
+      "status": "completed",
+      "dem_data": "landslide_test_outputs/dem/srtm_30m.tif",
+      "metadata": {
+        "data_source": "SRTM 30m",
+        "bbox": [
+          85.3,
+          27.6,
+          85.35,
+          27.65
+        ],
+        "resolution": 30,
+        "vertical_accuracy": "\u00b116m",
+        "simulated": true
+      },
+      "simulated": true
+    }
+  },
+  "recommendations": []
+}

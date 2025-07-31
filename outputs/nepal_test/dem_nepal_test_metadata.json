@@ -1,0 +1,18 @@
+{
+  "step_id": "acquire_elevation_data",
+  "step_type": "dem_acquisition",
+  "bbox": [
+    85.3,
+    27.6,
+    85.4,
+    27.7
+  ],
+  "source": "SRTM",
+  "resolution": 90,
+  "derivatives": [
+    "slope",
+    "aspect"
+  ],
+  "mock_data": true,
+  "execution_time": "2025-07-31 13:20:19"
+}
