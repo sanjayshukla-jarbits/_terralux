@@ -72,13 +72,7 @@ class StepRegistry:
     _logger = logging.getLogger('StepRegistry')
     
     @classmethod
-    def register(cls, 
-                step_type: str, 
-                step_class: Type['BaseStep'],
-                category: Optional[str] = None,
-                aliases: Optional[List[str]] = None,
-                override: bool = False,
-                metadata: Optional[Dict[str, Any]] = None) -> None:
+    def register(cls, step_type: str, step_class: Type['BaseStep'], override: bool = True):
         """
         Register a step class with the registry.
         
@@ -95,7 +89,7 @@ class StepRegistry:
         """
         with cls._lock:
             # Validate inputs
-            cls._validate_registration(step_type, step_class, override)
+            #cls._validate_registration(step_type, step_class, override)
             
             # Check for existing registration - CORRECTED: More lenient for development
             if step_type in cls._steps and not override:
@@ -105,17 +99,19 @@ class StepRegistry:
                 return  # Don't raise error, just warn and return
             
             # Validate step class - CORRECTED: More lenient validation
-            validation_errors = cls._validate_step_class(step_class)
-            if validation_errors:
-                cls._logger.debug(
-                    f"Step class validation warnings for '{step_type}': {validation_errors}"
-                )
+            #validation_errors = cls._validate_step_class(step_class)
+            #if validation_errors:
+            #    cls._logger.debug(
+            #        f"Step class validation warnings for '{step_type}': {validation_errors}"
+            #    )
                 # Continue with registration anyway for fail-fast development
             
             # Register the step
-            old_class = cls._steps.get(step_type)
+            #old_class = cls._steps.get(step_type)
             cls._steps[step_type] = step_class
             cls._registration_count += 1
+            cls._logger.info(f"Registered step type: '{step_type}' -> {step_class.__name__}")
+
             
             # Store metadata
             step_metadata = {

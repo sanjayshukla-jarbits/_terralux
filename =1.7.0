@@ -1,0 +1,2 @@
+Requirement already satisfied: scipy in /home/ubuntu/miniconda3/envs/landslide/lib/python3.9/site-packages (1.13.1)
+Requirement already satisfied: numpy<2.3,>=1.22.4 in /home/ubuntu/miniconda3/envs/landslide/lib/python3.9/site-packages (from scipy) (2.0.2)

@@ -17,6 +17,6 @@
     "outputs/nepal_test/dem_data/roughness_acquire_elevation_data.tif",
     "outputs/nepal_test/dem_data/terrain_ruggedness_index_acquire_elevation_data.tif"
   ],
-  "generation_time": "2025-08-01T11:23:17.799102",
+  "generation_time": "2025-08-01T12:14:34.133124",
   "step_id": "acquire_elevation_data"
 }

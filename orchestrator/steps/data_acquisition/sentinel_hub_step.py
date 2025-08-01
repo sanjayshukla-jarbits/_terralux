@@ -174,37 +174,80 @@ class SentinelHubAcquisitionStep(BaseStep):
                     'mock': False
                 }
             }
-    
+
     def _get_data_collection(self, collection_name: str):
         """
         FIXED: Get DataCollection object from collection name.
-        This method was missing and causing the execution error.
-        
-        Args:
-            collection_name: Name of the data collection
-            
-        Returns:
-            DataCollection object or None if not available
+        Now includes proper attribute checking to prevent AttributeError.
         """
         if not SENTINELHUB_AVAILABLE:
             self.logger.warning("SentinelHub library not available for data collection mapping")
             return None
-            
-        # Mapping of collection names to DataCollection objects
-        collection_mapping = {
-            'SENTINEL-2-L1C': DataCollection.SENTINEL2_L1C,
-            'SENTINEL-2-L2A': DataCollection.SENTINEL2_L2A,
-            'SENTINEL-1-GRD': DataCollection.SENTINEL1_GRD,
-            'LANDSAT-8': DataCollection.LANDSAT8,
-            'DEM': DataCollection.DEM
-        }
         
+        # FIXED: Safe attribute checking with fallbacks
+        collection_mapping = {}
+    
+        # Check each collection attribute safely
+        if hasattr(DataCollection, 'SENTINEL2_L1C'):
+            collection_mapping['SENTINEL-2-L1C'] = DataCollection.SENTINEL2_L1C
+    
+        if hasattr(DataCollection, 'SENTINEL2_L2A'):
+            collection_mapping['SENTINEL-2-L2A'] = DataCollection.SENTINEL2_L2A
+    
+        # FIXED: Check for SENTINEL1_GRD with fallback
+        if hasattr(DataCollection, 'SENTINEL1_GRD'):
+            collection_mapping['SENTINEL-1-GRD'] = DataCollection.SENTINEL1_GRD
+        elif hasattr(DataCollection, 'SENTINEL1'):
+            collection_mapping['SENTINEL-1-GRD'] = DataCollection.SENTINEL1
+            self.logger.info("Using SENTINEL1 instead of SENTINEL1_GRD")
+    
+        # Check other collections
+        if hasattr(DataCollection, 'LANDSAT8'):
+            collection_mapping['LANDSAT-8'] = DataCollection.LANDSAT8
+    
+        if hasattr(DataCollection, 'DEM'):
+            collection_mapping['DEM'] = DataCollection.DEM
+    
+        # Get the requested collection with fallback
         collection = collection_mapping.get(collection_name.upper())
         if collection is None:
-            self.logger.warning(f"Unknown data collection: {collection_name}, defaulting to SENTINEL-2-L2A")
-            collection = DataCollection.SENTINEL2_L2A
+            self.logger.warning(f"Collection {collection_name} not available, using SENTINEL-2-L2A as fallback")
+            # Ensure we have a fallback
+            if 'SENTINEL-2-L2A' in collection_mapping:
+                return collection_mapping['SENTINEL-2-L2A']
+            elif collection_mapping:
+                # Use first available collection
+                fallback_name, fallback_collection = next(iter(collection_mapping.items()))
+                self.logger.info(f"Using {fallback_name} as fallback collection")
+                return fallback_collection
+            else:
+                self.logger.error("No data collections available in SentinelHub library")
+                return None
             
         return collection
+
+    def _check_api_availability(self) -> bool:
+        """Enhanced API availability check with better error handling."""
+        if not SENTINELHUB_AVAILABLE:
+            self.logger.debug("SentinelHub library not available")
+            return False
+    
+        # Check credentials
+        client_id = os.getenv('SENTINEL_HUB_CLIENT_ID')
+        client_secret = os.getenv('SENTINEL_HUB_CLIENT_SECRET') 
+    
+        if not client_id or not client_secret:
+            self.logger.debug("Sentinel Hub credentials not found in environment")
+            return False
+    
+        # Check if data collection is available
+        test_collection = self._get_data_collection(self.data_collection)
+        if test_collection is None:
+            self.logger.debug(f"Data collection {self.data_collection} not available")
+            return False
+    
+        self.logger.debug("Sentinel Hub API appears to be available")
+        return True    
     
     def _extract_parameters(self, context) -> Dict[str, Any]:
         """Extract and process acquisition parameters from context."""
@@ -236,19 +279,7 @@ class SentinelHubAcquisitionStep(BaseStep):
         
         if not params.get('start_date') or not params.get('end_date'):
             raise ValueError("Missing required parameters: start_date, end_date")
-    
-    def _check_api_availability(self) -> bool:
-        """Check if Sentinel Hub API is available and configured."""
-        if not SENTINELHUB_AVAILABLE:
-            self.logger.warning("SentinelHub library not available")
-            return False
         
-        if not self.client_id or not self.client_secret:
-            self.logger.warning("Sentinel Hub credentials not configured")
-            return False
-        
-        return True
-    
     def _log_acquisition_info(self, params: Dict[str, Any]) -> None:
         """Log acquisition information."""
         self.logger.info("Acquisition parameters:")
