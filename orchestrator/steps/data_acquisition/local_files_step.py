@@ -90,7 +90,7 @@ class LocalFilesDiscoveryError(Exception):
     pass
 
 
-class LocalFilesStep(BaseStep):
+class LocalFilesDiscoveryStep(BaseStep):
     """
     Local files discovery and loading step.
     CORRECTED for compatibility with ModularOrchestrator ExecutionContext
