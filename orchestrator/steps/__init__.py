@@ -1,762 +1,564 @@
 """
-Orchestrator Steps Module - Fail Fast Plan
-==========================================
+Orchestrator Steps Module - Complete Step Library
+================================================
 
-This module contains all step implementations for the modular orchestrator
-system, designed for rapid development, testing, and validation of geospatial
-data workflows.
-
-Key Features:
-- Modular step-based workflow execution
-- Fail-fast execution with performance monitoring
-- Comprehensive mock data support for testing
-- Integration with existing landslide_pipeline structure
-- Extensive error handling and recovery mechanisms
-- Performance optimization for rapid development
+This module provides the complete library of pipeline steps for the modular
+orchestrator system, with enhanced registration management and validation.
 
 Step Categories:
-- data_acquisition: Satellite imagery, DEM, and local files acquisition
-- data_processing: Harmonization, transformation, and analysis
-- data_validation: Quality assessment and validation
-- utilities: Mock data generation and helper functions
+- base: Core infrastructure (BaseStep, StepRegistry)
+- data_acquisition: Data acquisition from various sources
+- preprocessing: Data preprocessing and cleaning
+- feature_extraction: Feature calculation and extraction
+- segmentation: Image/data segmentation
+- modeling: Machine learning and statistical modeling
+- prediction: Prediction and mapping
+- visualization: Visualization and reporting
 
-Author: Orchestrator Development Team
-Version: 1.0.0-failfast
-License: MIT
+Enhanced Features:
+- Automatic step discovery and registration
+- Comprehensive validation and health monitoring
+- Import error handling with graceful degradation
+- Module dependency tracking
+- Registration status reporting
 """
 
-import sys
 import logging
 import warnings
-from typing import Dict, Any, List, Optional, Union, Type
-from abc import ABC, abstractmethod
+from typing import Dict, List, Optional, Any
+from pathlib import Path
 
-# Module metadata
-__version__ = "1.0.0-failfast"
-__author__ = "Orchestrator Development Team"
-__license__ = "MIT"
-__description__ = "Modular workflow steps for geospatial data processing - Fail Fast Plan"
-
-# Configure module-level logging
+# Configure logging
 logger = logging.getLogger(__name__)
 
-# Step execution configuration
-STEP_CONFIG = {
-    "fail_fast_mode": True,
-    "use_mock_data": True,
-    "performance_monitoring": True,
-    "default_timeout": 300,
-    "max_retry_attempts": 2,
-    "enable_caching": True,
-    "auto_fallback": True
-}
+# Module version
+__version__ = "2.0.0"
+__author__ = "TerraLux Development Team"
 
-# Base Step Class
-class BaseStep(ABC):
+# Step registration tracking
+_MODULE_REGISTRY = {}
+_REGISTRATION_STATUS = {}
+_IMPORT_ERRORS = {}
+_STEP_COUNTS = {}
+
+# Core base module (always try to import first)
+try:
+    from .base import *
+    from .base import StepRegistry, BaseStep, register_step_safe
+    from .base import auto_register_step_modules, get_registration_status
+    _MODULE_REGISTRY['base'] = 'success'
+    logger.debug("✓ Base module imported successfully")
+except ImportError as e:
+    logger.error(f"✗ Failed to import base module: {e}")
+    _MODULE_REGISTRY['base'] = 'failed'
+    _IMPORT_ERRORS['base'] = str(e)
+    # Create dummy objects to prevent further errors
+    StepRegistry = None
+    BaseStep = None
+    register_step_safe = None
+
+
+def _safe_import_step_module(module_name: str, module_path: str) -> bool:
     """
-    Abstract base class for all orchestrator steps.
+    Safely import a step module with error handling.
     
-    Provides common functionality for step execution, error handling,
-    performance monitoring, and mock data support.
+    Args:
+        module_name: Human-readable module name
+        module_path: Import path for the module
+        
+    Returns:
+        True if import successful, False otherwise
     """
-    
-    def __init__(self, config: Dict[str, Any]):
-        """
-        Initialize step with configuration.
+    try:
+        module = __import__(module_path, fromlist=[''])
+        _MODULE_REGISTRY[module_name] = 'success'
         
-        Args:
-            config: Step configuration dictionary
-        """
-        self.config = config
-        self.step_id = config.get("id", "unknown_step")
-        self.step_type = config.get("type", "unknown_type")
-        self.step_name = config.get("name", self.step_id)
-        self.description = config.get("description", "")
-        self.hyperparameters = config.get("hyperparameters", {})
-        self.timeout = config.get("timeout", STEP_CONFIG["default_timeout"])
-        self.retry_attempts = config.get("retry_attempts", STEP_CONFIG["max_retry_attempts"])
+        # Count steps if StepRegistry is available
+        if StepRegistry:
+            try:
+                current_steps = len(StepRegistry.get_registered_types())
+                _STEP_COUNTS[module_name] = current_steps
+            except:
+                pass
         
-        # Performance tracking
-        self.execution_start_time = None
-        self.execution_end_time = None
-        self.execution_metrics = {}
-        
-        # Mock data configuration
-        self.use_mock_data = self.hyperparameters.get(
-            "use_mock_data", 
-            STEP_CONFIG["use_mock_data"]
-        )
-        
-        logger.debug(f"Initialized step: {self.step_id} ({self.step_type})")
-    
-    @abstractmethod
-    def execute(self, inputs: Dict[str, Any] = None, context: Any = None) -> Dict[str, Any]:
-        """
-        Execute the step with given inputs and context.
-        
-        Args:
-            inputs: Input data from previous steps
-            context: Execution context
-            
-        Returns:
-            Dictionary containing step outputs
-        """
-        pass
-    
-    def validate_inputs(self, inputs: Dict[str, Any] = None) -> bool:
-        """
-        Validate input data before execution.
-        
-        Args:
-            inputs: Input data to validate
-            
-        Returns:
-            True if inputs are valid
-        """
-        # Default implementation - can be overridden by specific steps
-        required_inputs = self.config.get("inputs", {})
-        
-        if not required_inputs:
-            return True
-        
-        if not inputs:
-            inputs = {}
-        
-        for input_key, input_config in required_inputs.items():
-            if input_config.get("required", False) and input_key not in inputs:
-                logger.error(f"Required input '{input_key}' not provided for step {self.step_id}")
-                return False
-        
+        logger.debug(f"✓ Successfully imported {module_name} module")
         return True
+        
+    except ImportError as e:
+        _MODULE_REGISTRY[module_name] = 'failed'
+        _IMPORT_ERRORS[module_name] = str(e)
+        logger.debug(f"✗ {module_name} module not available: {e}")
+        return False
+    except Exception as e:
+        _MODULE_REGISTRY[module_name] = 'error'
+        _IMPORT_ERRORS[module_name] = str(e)
+        logger.warning(f"✗ Error importing {module_name} module: {e}")
+        return False
+
+
+def _register_step_modules():
+    """Register all available step modules."""
+    logger.info("Discovering and registering step modules...")
     
-    def start_performance_monitoring(self):
-        """Start performance monitoring for the step."""
-        import time
-        import psutil
-        
-        self.execution_start_time = time.time()
-        
+    # Step module definitions: (name, import_path, description)
+    step_modules = [
+        ('data_acquisition', 'orchestrator.steps.data_acquisition', 'Data acquisition from various sources'),
+        ('preprocessing', 'orchestrator.steps.preprocessing', 'Data preprocessing and cleaning'),
+        ('feature_extraction', 'orchestrator.steps.feature_extraction', 'Feature calculation and extraction'),
+        ('segmentation', 'orchestrator.steps.segmentation', 'Image and data segmentation'),
+        ('modeling', 'orchestrator.steps.modeling', 'Machine learning and statistical modeling'),
+        ('prediction', 'orchestrator.steps.prediction', 'Prediction and mapping'),
+        ('visualization', 'orchestrator.steps.visualization', 'Visualization and reporting')
+    ]
+    
+    successful_imports = 0
+    initial_step_count = 0
+    
+    # Get initial step count
+    if StepRegistry:
         try:
-            process = psutil.Process()
-            self.execution_metrics["start_memory_mb"] = process.memory_info().rss / 1024 / 1024
-            self.execution_metrics["start_cpu_percent"] = process.cpu_percent()
-        except Exception as e:
-            logger.warning(f"Could not start performance monitoring: {e}")
+            initial_step_count = len(StepRegistry.get_registered_types())
+        except:
+            pass
     
-    def stop_performance_monitoring(self):
-        """Stop performance monitoring and calculate metrics."""
-        import time
-        import psutil
-        
-        if self.execution_start_time is None:
-            return
-        
-        self.execution_end_time = time.time()
-        execution_time = self.execution_end_time - self.execution_start_time
-        
-        self.execution_metrics["execution_time_seconds"] = execution_time
-        
+    # Import each module
+    for module_name, module_path, description in step_modules:
+        logger.debug(f"Importing {module_name}: {description}")
+        if _safe_import_step_module(module_name, module_path):
+            successful_imports += 1
+    
+    # Calculate final step counts
+    final_step_count = 0
+    if StepRegistry:
         try:
-            process = psutil.Process()
-            end_memory = process.memory_info().rss / 1024 / 1024
-            start_memory = self.execution_metrics.get("start_memory_mb", 0)
-            
-            self.execution_metrics["end_memory_mb"] = end_memory
-            self.execution_metrics["memory_used_mb"] = end_memory - start_memory
-            self.execution_metrics["end_cpu_percent"] = process.cpu_percent()
+            final_step_count = len(StepRegistry.get_registered_types())
+            new_steps = final_step_count - initial_step_count
+            logger.info(f"✓ Registered {new_steps} new steps from {successful_imports} modules")
+        except:
+            logger.debug("Could not calculate step count changes")
+    
+    # Log summary
+    total_modules = len(step_modules)
+    if successful_imports == total_modules:
+        logger.info(f"✓ All {total_modules} step modules imported successfully")
+    elif successful_imports > 0:
+        logger.info(f"✓ {successful_imports}/{total_modules} step modules imported successfully")
+        failed_modules = [name for name, status in _MODULE_REGISTRY.items() 
+                         if status in ['failed', 'error'] and name != 'base']
+        if failed_modules:
+            logger.debug(f"Missing modules: {failed_modules}")
+    else:
+        logger.warning("✗ No step modules could be imported")
+    
+    return {
+        'successful': successful_imports,
+        'total': total_modules,
+        'initial_steps': initial_step_count,
+        'final_steps': final_step_count
+    }
+
+
+def get_module_status() -> Dict[str, Any]:
+    """Get comprehensive module status information."""
+    status = {
+        'module_registry': _MODULE_REGISTRY.copy(),
+        'import_errors': _IMPORT_ERRORS.copy(),
+        'step_counts': _STEP_COUNTS.copy(),
+        'version': __version__
+    }
+    
+    # Add step registry information if available
+    if StepRegistry:
+        try:
+            status['total_registered_steps'] = len(StepRegistry.get_registered_types())
+            status['registered_step_types'] = StepRegistry.get_registered_types()
+            status['registry_stats'] = StepRegistry.get_registry_stats()
         except Exception as e:
-            logger.warning(f"Could not complete performance monitoring: {e}")
-        
-        logger.info(f"Step {self.step_id} completed in {execution_time:.2f}s")
+            status['registry_error'] = str(e)
+    else:
+        status['registry_available'] = False
     
-    def get_performance_metrics(self) -> Dict[str, Any]:
-        """Get performance metrics for the step."""
-        return self.execution_metrics.copy()
+    # Calculate summary statistics
+    successful_modules = len([s for s in _MODULE_REGISTRY.values() if s == 'success'])
+    total_modules = len(_MODULE_REGISTRY)
+    
+    status['summary'] = {
+        'successful_modules': successful_modules,
+        'total_modules': total_modules,
+        'success_rate': successful_modules / total_modules if total_modules > 0 else 0,
+        'core_available': _MODULE_REGISTRY.get('base') == 'success'
+    }
+    
+    return status
 
 
-# Import data acquisition steps with error handling
-try:
-    from .data_acquisition import (
-        SentinelHubAcquisitionStep,
-        DEMAcquisitionStep,
-        LocalFilesDiscoveryStep,
-        ASTERDEMAcquisitionStep,
-        LandsatAcquisitionStep,
-        MODISAcquisitionStep
-    )
-    
-    DATA_ACQUISITION_AVAILABLE = True
-    logger.debug("Data acquisition steps loaded successfully")
-    
-    # Register step types
-    DATA_ACQUISITION_STEPS = {
-        "sentinel_hub_acquisition": SentinelHubAcquisitionStep,
-        "dem_acquisition": DEMAcquisitionStep,
-        "local_files_discovery": LocalFilesDiscoveryStep,
-        "aster_dem_acquisition": ASTERDEMAcquisitionStep,
-        "landsat_acquisition": LandsatAcquisitionStep,
-        "modis_acquisition": MODISAcquisitionStep
-    }
-    
-except ImportError as e:
-    logger.warning(f"Data acquisition steps not available: {e}")
-    DATA_ACQUISITION_AVAILABLE = False
-    
-    # Mock implementations for development
-    class MockAcquisitionStep(BaseStep):
-        """Mock acquisition step for development."""
-        def execute(self, inputs=None, context=None):
-            self.start_performance_monitoring()
-            
-            # Simulate processing time
-            import time
-            time.sleep(0.1)
-            
-            result = {
-                "status": "completed",
-                "mock": True,
-                "step_type": self.step_type,
-                "output_data": f"/mock/path/{self.step_id}_output.tif",
-                "metadata": {
-                    "processing_time": 0.1,
-                    "mock_data_used": True
-                }
-            }
-            
-            self.stop_performance_monitoring()
-            result["performance_metrics"] = self.get_performance_metrics()
-            
-            return result
-    
-    # Create mock step classes
-    SentinelHubAcquisitionStep = type("SentinelHubAcquisitionStep", (MockAcquisitionStep,), {})
-    DEMAcquisitionStep = type("DEMAcquisitionStep", (MockAcquisitionStep,), {})
-    LocalFilesDiscoveryStep = type("LocalFilesDiscoveryStep", (MockAcquisitionStep,), {})
-    ASTERDEMAcquisitionStep = type("ASTERDEMAcquisitionStep", (MockAcquisitionStep,), {})
-    LandsatAcquisitionStep = type("LandsatAcquisitionStep", (MockAcquisitionStep,), {})
-    MODISAcquisitionStep = type("MODISAcquisitionStep", (MockAcquisitionStep,), {})
-    
-    DATA_ACQUISITION_STEPS = {
-        "sentinel_hub_acquisition": SentinelHubAcquisitionStep,
-        "dem_acquisition": DEMAcquisitionStep,
-        "local_files_discovery": LocalFilesDiscoveryStep,
-        "aster_dem_acquisition": ASTERDEMAcquisitionStep,
-        "landsat_acquisition": LandsatAcquisitionStep,
-        "modis_acquisition": MODISAcquisitionStep
-    }
-
-# Import data processing steps with error handling
-try:
-    from .data_processing import (
-        DataHarmonizationStep,
-        SpectralIndicesCalculationStep,
-        TemporalAggregationStep,
-        SpatialFilteringStep,
-        DataTransformationStep,
-        FeatureExtractionStep
-    )
-    
-    DATA_PROCESSING_AVAILABLE = True
-    logger.debug("Data processing steps loaded successfully")
-    
-    # Register step types
-    DATA_PROCESSING_STEPS = {
-        "data_harmonization": DataHarmonizationStep,
-        "spectral_indices_calculation": SpectralIndicesCalculationStep,
-        "temporal_aggregation": TemporalAggregationStep,
-        "spatial_filtering": SpatialFilteringStep,
-        "data_transformation": DataTransformationStep,
-        "feature_extraction": FeatureExtractionStep
-    }
-    
-except ImportError as e:
-    logger.warning(f"Data processing steps not available: {e}")
-    DATA_PROCESSING_AVAILABLE = False
-    
-    # Mock implementations
-    class MockProcessingStep(BaseStep):
-        """Mock processing step for development."""
-        def execute(self, inputs=None, context=None):
-            self.start_performance_monitoring()
-            
-            import time
-            time.sleep(0.05)
-            
-            result = {
-                "status": "completed",
-                "mock": True,
-                "step_type": self.step_type,
-                "processed_data": f"/mock/path/{self.step_id}_processed.tif",
-                "metadata": {
-                    "processing_time": 0.05,
-                    "mock_processing": True,
-                    "input_count": len(inputs) if inputs else 0
-                }
-            }
-            
-            self.stop_performance_monitoring()
-            result["performance_metrics"] = self.get_performance_metrics()
-            
-            return result
-    
-    # Create mock step classes
-    DataHarmonizationStep = type("DataHarmonizationStep", (MockProcessingStep,), {})
-    SpectralIndicesCalculationStep = type("SpectralIndicesCalculationStep", (MockProcessingStep,), {})
-    TemporalAggregationStep = type("TemporalAggregationStep", (MockProcessingStep,), {})
-    SpatialFilteringStep = type("SpatialFilteringStep", (MockProcessingStep,), {})
-    DataTransformationStep = type("DataTransformationStep", (MockProcessingStep,), {})
-    FeatureExtractionStep = type("FeatureExtractionStep", (MockProcessingStep,), {})
-    
-    DATA_PROCESSING_STEPS = {
-        "data_harmonization": DataHarmonizationStep,
-        "spectral_indices_calculation": SpectralIndicesCalculationStep,
-        "temporal_aggregation": TemporalAggregationStep,
-        "spatial_filtering": SpatialFilteringStep,
-        "data_transformation": DataTransformationStep,
-        "feature_extraction": FeatureExtractionStep
-    }
-
-# Import validation steps with error handling
-try:
-    from .data_validation import (
-        DataValidationStep,
-        QualityAssessmentStep,
-        SpatialValidationStep,
-        TemporalValidationStep,
-        MetadataValidationStep,
-        InventoryGenerationStep
-    )
-    
-    DATA_VALIDATION_AVAILABLE = True
-    logger.debug("Data validation steps loaded successfully")
-    
-    # Register step types
-    DATA_VALIDATION_STEPS = {
-        "data_validation": DataValidationStep,
-        "quality_assessment": QualityAssessmentStep,
-        "spatial_validation": SpatialValidationStep,
-        "temporal_validation": TemporalValidationStep,
-        "metadata_validation": MetadataValidationStep,
-        "inventory_generation": InventoryGenerationStep
-    }
-    
-except ImportError as e:
-    logger.warning(f"Data validation steps not available: {e}")
-    DATA_VALIDATION_AVAILABLE = False
-    
-    # Mock implementations
-    class MockValidationStep(BaseStep):
-        """Mock validation step for development."""
-        def execute(self, inputs=None, context=None):
-            self.start_performance_monitoring()
-            
-            import time
-            time.sleep(0.02)
-            
-            result = {
-                "status": "completed",
-                "mock": True,
-                "step_type": self.step_type,
-                "validation_results": {
-                    "overall_quality": "GOOD",
-                    "validation_checks": ["spatial_bounds", "data_integrity"],
-                    "passed_checks": 2,
-                    "failed_checks": 0,
-                    "warnings": [],
-                    "mock_validation": True
-                },
-                "validation_report": f"/mock/path/{self.step_id}_validation_report.json"
-            }
-            
-            self.stop_performance_monitoring()
-            result["performance_metrics"] = self.get_performance_metrics()
-            
-            return result
-    
-    # Create mock step classes
-    DataValidationStep = type("DataValidationStep", (MockValidationStep,), {})
-    QualityAssessmentStep = type("QualityAssessmentStep", (MockValidationStep,), {})
-    SpatialValidationStep = type("SpatialValidationStep", (MockValidationStep,), {})
-    TemporalValidationStep = type("TemporalValidationStep", (MockValidationStep,), {})
-    MetadataValidationStep = type("MetadataValidationStep", (MockValidationStep,), {})
-    InventoryGenerationStep = type("InventoryGenerationStep", (MockValidationStep,), {})
-    
-    DATA_VALIDATION_STEPS = {
-        "data_validation": DataValidationStep,
-        "quality_assessment": QualityAssessmentStep,
-        "spatial_validation": SpatialValidationStep,
-        "temporal_validation": TemporalValidationStep,
-        "metadata_validation": MetadataValidationStep,
-        "inventory_generation": InventoryGenerationStep
-    }
-
-# Import utility steps with error handling
-try:
-    from .utilities import (
-        MockDataGenerationStep,
-        FileOperationsStep,
-        DataConversionStep,
-        MetadataExtractionStep,
-        PerformanceMonitoringStep
-    )
-    
-    UTILITIES_AVAILABLE = True
-    logger.debug("Utility steps loaded successfully")
-    
-    # Register step types
-    UTILITY_STEPS = {
-        "mock_data_generation": MockDataGenerationStep,
-        "file_operations": FileOperationsStep,
-        "data_conversion": DataConversionStep,
-        "metadata_extraction": MetadataExtractionStep,
-        "performance_monitoring": PerformanceMonitoringStep
-    }
-    
-except ImportError as e:
-    logger.warning(f"Utility steps not available: {e}")
-    UTILITIES_AVAILABLE = False
-    
-    # Mock implementations
-    class MockUtilityStep(BaseStep):
-        """Mock utility step for development."""
-        def execute(self, inputs=None, context=None):
-            self.start_performance_monitoring()
-            
-            import time
-            time.sleep(0.01)
-            
-            result = {
-                "status": "completed",
-                "mock": True,
-                "step_type": self.step_type,
-                "utility_output": f"/mock/path/{self.step_id}_output",
-                "metadata": {
-                    "processing_time": 0.01,
-                    "mock_utility": True
-                }
-            }
-            
-            self.stop_performance_monitoring()
-            result["performance_metrics"] = self.get_performance_metrics()
-            
-            return result
-    
-    # Create mock step classes
-    MockDataGenerationStep = type("MockDataGenerationStep", (MockUtilityStep,), {})
-    FileOperationsStep = type("FileOperationsStep", (MockUtilityStep,), {})
-    DataConversionStep = type("DataConversionStep", (MockUtilityStep,), {})
-    MetadataExtractionStep = type("MetadataExtractionStep", (MockUtilityStep,), {})
-    PerformanceMonitoringStep = type("PerformanceMonitoringStep", (MockUtilityStep,), {})
-    
-    UTILITY_STEPS = {
-        "mock_data_generation": MockDataGenerationStep,
-        "file_operations": FileOperationsStep,
-        "data_conversion": DataConversionStep,
-        "metadata_extraction": MetadataExtractionStep,
-        "performance_monitoring": PerformanceMonitoringStep
-    }
-
-# Complete step registry
-ALL_STEPS = {
-    **DATA_ACQUISITION_STEPS,
-    **DATA_PROCESSING_STEPS,
-    **DATA_VALIDATION_STEPS,
-    **UTILITY_STEPS
-}
-
-# Module-level functions
 def get_available_step_types() -> List[str]:
     """Get list of all available step types."""
-    return list(ALL_STEPS.keys())
+    if not StepRegistry:
+        logger.warning("StepRegistry not available")
+        return []
+    
+    try:
+        return StepRegistry.get_registered_types()
+    except Exception as e:
+        logger.error(f"Failed to get step types: {e}")
+        return []
 
-def get_step_class(step_type: str) -> Type[BaseStep]:
-    """
-    Get step class for a given step type.
-    
-    Args:
-        step_type: Type of step to get
-        
-    Returns:
-        Step class
-        
-    Raises:
-        ValueError: If step type is not found
-    """
-    if step_type not in ALL_STEPS:
-        available_types = list(ALL_STEPS.keys())
-        raise ValueError(f"Unknown step type: {step_type}. Available: {available_types}")
-    
-    return ALL_STEPS[step_type]
-
-def create_step(step_config: Dict[str, Any]) -> BaseStep:
-    """
-    Factory function to create a step instance from configuration.
-    
-    Args:
-        step_config: Step configuration dictionary
-        
-    Returns:
-        Initialized step instance
-        
-    Raises:
-        ValueError: If step type is not recognized
-    """
-    step_type = step_config.get("type")
-    if not step_type:
-        raise ValueError("Step configuration must include 'type' field")
-    
-    step_class = get_step_class(step_type)
-    return step_class(step_config)
-
-def validate_step_config(step_config: Dict[str, Any]) -> List[str]:
-    """
-    Validate step configuration structure.
-    
-    Args:
-        step_config: Step configuration to validate
-        
-    Returns:
-        List of validation errors (empty if valid)
-    """
-    errors = []
-    
-    # Check required fields
-    required_fields = ["id", "type", "description"]
-    for field in required_fields:
-        if field not in step_config:
-            errors.append(f"Missing required field: {field}")
-    
-    # Check step type exists
-    step_type = step_config.get("type")
-    if step_type and step_type not in ALL_STEPS:
-        errors.append(f"Unknown step type: {step_type}")
-    
-    # Validate outputs structure
-    outputs = step_config.get("outputs", {})
-    if outputs:
-        for output_key, output_config in outputs.items():
-            if not isinstance(output_config, dict):
-                errors.append(f"Output '{output_key}' must be a dictionary")
-            else:
-                required_output_fields = ["key", "type"]
-                for field in required_output_fields:
-                    if field not in output_config:
-                        errors.append(f"Output '{output_key}' missing required field: {field}")
-    
-    return errors
 
 def get_step_categories() -> Dict[str, List[str]]:
     """Get step types organized by category."""
-    return {
-        "data_acquisition": list(DATA_ACQUISITION_STEPS.keys()),
-        "data_processing": list(DATA_PROCESSING_STEPS.keys()),
-        "data_validation": list(DATA_VALIDATION_STEPS.keys()),
-        "utilities": list(UTILITY_STEPS.keys())
-    }
+    if not StepRegistry:
+        return {}
+    
+    try:
+        return StepRegistry.get_categories()
+    except Exception as e:
+        logger.error(f"Failed to get step categories: {e}")
+        return {}
 
-def get_step_info(step_type: str) -> Dict[str, Any]:
-    """
-    Get information about a specific step type.
-    
-    Args:
-        step_type: Type of step to get info for
-        
-    Returns:
-        Dictionary with step information
-    """
-    if step_type not in ALL_STEPS:
-        raise ValueError(f"Unknown step type: {step_type}")
-    
-    step_class = ALL_STEPS[step_type]
-    
-    # Determine category
-    category = "unknown"
-    for cat, steps in get_step_categories().items():
-        if step_type in steps:
-            category = cat
-            break
-    
-    return {
-        "step_type": step_type,
-        "step_class": step_class.__name__,
-        "category": category,
-        "description": getattr(step_class, "__doc__", "No description available"),
-        "mock_implementation": not any([
-            DATA_ACQUISITION_AVAILABLE and step_type in DATA_ACQUISITION_STEPS,
-            DATA_PROCESSING_AVAILABLE and step_type in DATA_PROCESSING_STEPS,
-            DATA_VALIDATION_AVAILABLE and step_type in DATA_VALIDATION_STEPS,
-            UTILITIES_AVAILABLE and step_type in UTILITY_STEPS
-        ])
-    }
 
-def get_module_status() -> Dict[str, Any]:
-    """Get status of the steps module."""
-    return {
-        "version": __version__,
-        "components": {
-            "data_acquisition": DATA_ACQUISITION_AVAILABLE,
-            "data_processing": DATA_PROCESSING_AVAILABLE,
-            "data_validation": DATA_VALIDATION_AVAILABLE,
-            "utilities": UTILITIES_AVAILABLE
-        },
-        "total_steps": len(ALL_STEPS),
-        "step_categories": get_step_categories(),
-        "config": STEP_CONFIG
-    }
-
-def configure_steps(**kwargs) -> None:
-    """
-    Configure module-wide step settings.
+def validate_step_registrations() -> Dict[str, Any]:
+    """Validate all step registrations."""
+    if not StepRegistry:
+        return {
+            'valid': False,
+            'error': 'StepRegistry not available'
+        }
     
-    Args:
-        **kwargs: Configuration parameters to update
-    """
-    STEP_CONFIG.update(kwargs)
-    logger.info(f"Steps configuration updated: {kwargs}")
-
-def execute_step_pipeline(steps_configs: List[Dict[str, Any]], 
-                         context: Any = None) -> List[Dict[str, Any]]:
-    """
-    Execute a pipeline of steps in sequence.
-    
-    Args:
-        steps_configs: List of step configurations
-        context: Execution context
-        
-    Returns:
-        List of step execution results
-    """
-    results = []
-    step_outputs = {}
-    
-    for step_config in steps_configs:
+    try:
+        # Use base module's validation if available
+        from .base import validate_all_registrations
+        return validate_all_registrations()
+    except ImportError:
+        # Fallback validation
         try:
-            # Create step instance
-            step = create_step(step_config)
+            step_types = StepRegistry.get_registered_types()
+            valid_count = 0
+            total_count = len(step_types)
+            validation_errors = []
             
-            # Prepare inputs from previous steps
-            inputs = {}
-            step_inputs = step_config.get("inputs", {})
+            for step_type in step_types:
+                try:
+                    step_class = StepRegistry.get_step_class(step_type)
+                    if hasattr(step_class, 'execute'):
+                        valid_count += 1
+                    else:
+                        validation_errors.append(f"{step_type}: Missing execute method")
+                except Exception as e:
+                    validation_errors.append(f"{step_type}: {e}")
             
-            for input_key, input_config in step_inputs.items():
-                source_step = input_config.get("source")
-                source_key = input_config.get("key")
-                
-                if source_step and source_step in step_outputs:
-                    if source_key in step_outputs[source_step]:
-                        inputs[input_key] = step_outputs[source_step][source_key]
-            
-            # Execute step
-            logger.info(f"Executing step: {step.step_id}")
-            result = step.execute(inputs=inputs, context=context)
-            
-            # Store outputs for next steps
-            step_outputs[step.step_id] = result
-            results.append(result)
-            
-            logger.info(f"Step {step.step_id} completed successfully")
+            return {
+                'valid': len(validation_errors) == 0,
+                'summary': {
+                    'total': total_count,
+                    'valid': valid_count,
+                    'invalid': total_count - valid_count
+                },
+                'errors': validation_errors
+            }
             
         except Exception as e:
-            error_result = {
-                "step_id": step_config.get("id", "unknown"),
-                "status": "failed",
-                "error": str(e),
-                "timestamp": time.time()
+            return {
+                'valid': False,
+                'error': f"Validation failed: {e}"
             }
-            results.append(error_result)
-            logger.error(f"Step {step_config.get('id')} failed: {e}")
-            
-            # Stop on error in fail-fast mode
-            if STEP_CONFIG["fail_fast_mode"]:
-                break
-    
-    return results
 
-# Package exports
+
+def print_module_status():
+    """Print comprehensive module status."""
+    status = get_module_status()
+    
+    print("=" * 70)
+    print("ORCHESTRATOR STEPS MODULE STATUS")
+    print("=" * 70)
+    
+    # Basic info
+    print(f"Version: {status['version']}")
+    print(f"Core Available: {status['summary']['core_available']}")
+    print(f"Modules: {status['summary']['successful_modules']}/{status['summary']['total_modules']} successful")
+    print(f"Success Rate: {status['summary']['success_rate']:.1%}")
+    
+    # Module details
+    print(f"\nModule Status:")
+    for module_name, module_status in status['module_registry'].items():
+        icon = "✓" if module_status == 'success' else "✗"
+        print(f"  {icon} {module_name}: {module_status}")
+        if module_status != 'success' and module_name in status['import_errors']:
+            print(f"    Error: {status['import_errors'][module_name]}")
+    
+    # Step registry info
+    if 'total_registered_steps' in status:
+        print(f"\nRegistered Steps: {status['total_registered_steps']}")
+        
+        # Show step categories if available
+        categories = get_step_categories()
+        if categories:
+            print(f"Step Categories:")
+            for category, steps in categories.items():
+                print(f"  • {category}: {len(steps)} steps")
+    else:
+        print(f"\nStep Registry: Not available")
+    
+    # Validation
+    validation = validate_step_registrations()
+    if validation['valid']:
+        print(f"\nValidation: ✓ All registrations valid")
+    else:
+        print(f"\nValidation: ✗ Issues found")
+        if 'summary' in validation:
+            print(f"  Valid: {validation['summary']['valid']}/{validation['summary']['total']}")
+    
+    print("=" * 70)
+
+
+def run_comprehensive_test() -> Dict[str, Any]:
+    """Run comprehensive test of the steps module."""
+    test_results = {
+        'tests': {},
+        'summary': {
+            'total_tests': 0,
+            'passed': 0,
+            'failed': 0,
+            'skipped': 0
+        }
+    }
+    
+    # Test 1: Module imports
+    test_results['tests']['module_imports'] = {
+        'status': 'success' if _MODULE_REGISTRY.get('base') == 'success' else 'failed',
+        'details': get_module_status()
+    }
+    test_results['summary']['total_tests'] += 1
+    if _MODULE_REGISTRY.get('base') == 'success':
+        test_results['summary']['passed'] += 1
+    else:
+        test_results['summary']['failed'] += 1
+    
+    # Test 2: Step registration
+    if StepRegistry:
+        try:
+            step_types = get_available_step_types()
+            test_results['tests']['step_registration'] = {
+                'status': 'success' if len(step_types) > 0 else 'failed',
+                'details': f"Found {len(step_types)} registered step types"
+            }
+            test_results['summary']['total_tests'] += 1
+            if len(step_types) > 0:
+                test_results['summary']['passed'] += 1
+            else:
+                test_results['summary']['failed'] += 1
+        except Exception as e:
+            test_results['tests']['step_registration'] = {
+                'status': 'failed',
+                'details': f"Step registration test failed: {e}"
+            }
+            test_results['summary']['total_tests'] += 1
+            test_results['summary']['failed'] += 1
+    else:
+        test_results['tests']['step_registration'] = {
+            'status': 'skipped',
+            'details': 'StepRegistry not available'
+        }
+        test_results['summary']['total_tests'] += 1
+        test_results['summary']['skipped'] += 1
+    
+    # Test 3: Validation
+    try:
+        validation_results = validate_step_registrations()
+        test_results['tests']['validation'] = {
+            'status': 'success' if validation_results['valid'] else 'failed',
+            'details': validation_results
+        }
+        test_results['summary']['total_tests'] += 1
+        if validation_results['valid']:
+            test_results['summary']['passed'] += 1
+        else:
+            test_results['summary']['failed'] += 1
+    except Exception as e:
+        test_results['tests']['validation'] = {
+            'status': 'failed',
+            'details': f"Validation test failed: {e}"
+        }
+        test_results['summary']['total_tests'] += 1
+        test_results['summary']['failed'] += 1
+    
+    # Test 4: Core functionality
+    if StepRegistry and BaseStep:
+        try:
+            # Test step creation
+            from .base import create_mock_step_safe
+            mock_step = create_mock_step_safe('test_step', 'mock')
+            
+            test_results['tests']['core_functionality'] = {
+                'status': 'success' if mock_step is not None else 'failed',
+                'details': 'Core functionality test completed'
+            }
+            test_results['summary']['total_tests'] += 1
+            if mock_step is not None:
+                test_results['summary']['passed'] += 1
+            else:
+                test_results['summary']['failed'] += 1
+        except Exception as e:
+            test_results['tests']['core_functionality'] = {
+                'status': 'failed',
+                'details': f"Core functionality test failed: {e}"
+            }
+            test_results['summary']['total_tests'] += 1
+            test_results['summary']['failed'] += 1
+    else:
+        test_results['tests']['core_functionality'] = {
+            'status': 'skipped',
+            'details': 'Core components not available'
+        }
+        test_results['summary']['total_tests'] += 1
+        test_results['summary']['skipped'] += 1
+    
+    # Determine overall status
+    if test_results['summary']['failed'] == 0:
+        if test_results['summary']['passed'] > 0:
+            test_results['summary']['overall_status'] = 'success'
+        else:
+            test_results['summary']['overall_status'] = 'skipped'
+    else:
+        test_results['summary']['overall_status'] = 'failed'
+    
+    return test_results
+
+
+def get_help() -> str:
+    """Get help information for the steps module."""
+    return """
+Orchestrator Steps Module Help
+=============================
+
+This module provides the complete library of pipeline steps for the modular
+orchestrator system.
+
+Quick Start:
+1. Check module status: print_module_status()
+2. List available steps: get_available_step_types()
+3. Validate registrations: validate_step_registrations()
+4. Run comprehensive test: run_comprehensive_test()
+
+Step Categories:
+- data_acquisition: Satellite data, DEM, local files
+- preprocessing: Atmospheric correction, geometric correction, cloud masking
+- feature_extraction: Spectral indices, topographic features, texture analysis
+- segmentation: SLIC, watershed, region growing
+- modeling: Random forest, CNN, clustering
+- prediction: Risk mapping, mineral prospectivity, uncertainty analysis
+- visualization: Maps, plots, reports
+
+Creating Custom Steps:
+1. Inherit from BaseStep
+2. Implement execute(self, context) method
+3. Register with StepRegistry.register() or register_step_safe()
+4. Use in JSON process definitions
+
+For detailed examples and documentation, see individual step modules.
+"""
+
+
+# Initialize the module
+def _initialize_steps_module():
+    """Initialize the steps module with comprehensive registration."""
+    logger.info(f"Initializing orchestrator steps module v{__version__}")
+    
+    # Check if base module is available
+    if _MODULE_REGISTRY.get('base') != 'success':
+        logger.error("Base module not available - step registration will be limited")
+        return
+    
+    # Register all step modules
+    registration_results = _register_step_modules()
+    
+    # Log final status
+    if registration_results['successful'] > 0:
+        logger.info(f"✓ Steps module initialized successfully")
+        logger.info(f"  - {registration_results['successful']}/{registration_results['total']} modules loaded")
+        logger.info(f"  - {registration_results['final_steps']} total registered steps")
+    else:
+        logger.warning("⚠ Steps module initialized with limited functionality")
+    
+    # Issue warnings if critical modules are missing
+    critical_modules = ['data_acquisition', 'preprocessing', 'feature_extraction']
+    missing_critical = [m for m in critical_modules if _MODULE_REGISTRY.get(m) != 'success']
+    
+    if missing_critical:
+        warnings.warn(
+            f"Critical step modules not available: {missing_critical}. "
+            f"Pipeline functionality may be limited. "
+            f"Install missing dependencies or check module implementations.",
+            RuntimeWarning
+        )
+
+
+# Export public API
 __all__ = [
-    # Metadata
-    "__version__",
-    "__author__",
-    "__license__",
-    "__description__",
+    # Core functionality (from base module)
+    'BaseStep',
+    'StepRegistry',
+    'register_step_safe',
     
-    # Base class
-    "BaseStep",
+    # Module management
+    'get_module_status',
+    'get_available_step_types', 
+    'get_step_categories',
+    'validate_step_registrations',
+    'print_module_status',
+    'run_comprehensive_test',
+    'get_help',
     
-    # Data acquisition steps
-    "SentinelHubAcquisitionStep",
-    "DEMAcquisitionStep",
-    "LocalFilesDiscoveryStep",
-    "ASTERDEMAcquisitionStep", 
-    "LandsatAcquisitionStep",
-    "MODISAcquisitionStep",
-    
-    # Data processing steps
-    "DataHarmonizationStep",
-    "SpectralIndicesCalculationStep",
-    "TemporalAggregationStep",
-    "SpatialFilteringStep",
-    "DataTransformationStep",
-    "FeatureExtractionStep",
-    
-    # Data validation steps
-    "DataValidationStep",
-    "QualityAssessmentStep",
-    "SpatialValidationStep",
-    "TemporalValidationStep",
-    "MetadataValidationStep",
-    "InventoryGenerationStep",
-    
-    # Utility steps
-    "MockDataGenerationStep",
-    "FileOperationsStep",
-    "DataConversionStep",
-    "MetadataExtractionStep",
-    "PerformanceMonitoringStep",
-    
-    # Module functions
-    "get_available_step_types",
-    "get_step_class",
-    "create_step",
-    "validate_step_config",
-    "get_step_categories",
-    "get_step_info",
-    "get_module_status",
-    "configure_steps",
-    "execute_step_pipeline",
-    
-    # Step registries
-    "ALL_STEPS",
-    "DATA_ACQUISITION_STEPS",
-    "DATA_PROCESSING_STEPS",
-    "DATA_VALIDATION_STEPS",
-    "UTILITY_STEPS",
-    
-    # Configuration
-    "STEP_CONFIG",
-    
-    # Availability flags
-    "DATA_ACQUISITION_AVAILABLE",
-    "DATA_PROCESSING_AVAILABLE",
-    "DATA_VALIDATION_AVAILABLE",
-    "UTILITIES_AVAILABLE"
+    # Version info
+    '__version__',
+    '__author__'
 ]
 
-# Module initialization logging
-logger.info(f"Orchestrator Steps module v{__version__} initialized")
-logger.info(f"Available components: Acquisition={DATA_ACQUISITION_AVAILABLE}, "
-           f"Processing={DATA_PROCESSING_AVAILABLE}, Validation={DATA_VALIDATION_AVAILABLE}, "
-           f"Utilities={UTILITIES_AVAILABLE}")
-logger.info(f"Total registered steps: {len(ALL_STEPS)}")
+# Initialize module on import
+_initialize_steps_module()
 
-if STEP_CONFIG["fail_fast_mode"]:
-    logger.info("Fail-fast mode enabled for step execution")
-
-# Environment check on import
-if not any([DATA_ACQUISITION_AVAILABLE, DATA_PROCESSING_AVAILABLE, 
-           DATA_VALIDATION_AVAILABLE, UTILITIES_AVAILABLE]):
-    warnings.warn(
-        "No step implementations are available. Using mock implementations only. "
-        "Install step dependencies for full functionality.",
-        RuntimeWarning
-    )
+# Quick test and status when run directly
+if __name__ == "__main__":
+    print("Running Orchestrator Steps Module Test...")
+    print("=" * 50)
+    
+    # Print module status
+    print_module_status()
+    
+    # Run comprehensive test
+    print("\n" + "=" * 50)
+    print("COMPREHENSIVE FUNCTIONALITY TEST")
+    print("=" * 50)
+    
+    test_results = run_comprehensive_test()
+    
+    print(f"\nTest Results:")
+    print(f"Total Tests: {test_results['summary']['total_tests']}")
+    print(f"Passed: {test_results['summary']['passed']}")
+    print(f"Failed: {test_results['summary']['failed']}")
+    print(f"Skipped: {test_results['summary']['skipped']}")
+    print(f"Overall Status: {test_results['summary']['overall_status'].upper()}")
+    
+    # Show test details
+    print(f"\nTest Details:")
+    for test_name, test_result in test_results['tests'].items():
+        status_icon = {"success": "✓", "failed": "✗", "skipped": "⊝"}[test_result['status']]
+        print(f"  {status_icon} {test_name}: {test_result['status']}")
+    
+    # Show failed tests with details
+    failed_tests = [name for name, result in test_results['tests'].items() 
+                   if result['status'] == 'failed']
+    if failed_tests:
+        print(f"\nFailed Test Details:")
+        for test_name in failed_tests:
+            details = test_results['tests'][test_name]['details']
+            print(f"  ✗ {test_name}: {details}")
+    
+    # Show help if there are issues
+    if test_results['summary']['failed'] > 0:
+        print(f"\nFor help resolving issues:")
+        print("python -c \"from orchestrator.steps import get_help; print(get_help())\"")
+    
+    # Exit with appropriate code
+    exit_code = 0 if test_results['summary']['overall_status'] == 'success' else 1
+    exit(exit_code)

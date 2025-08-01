@@ -3,50 +3,32 @@ Steps Base Module - Foundation for Pipeline Step Implementation
 ==============================================================
 
 This module provides the core infrastructure for implementing pipeline steps
-in the modular orchestrator system, designed with fail-fast principles.
-CORRECTED to remove all StepResult references and use Dict return types.
+in the modular orchestrator system, with enhanced registration management.
 
 Core Components:
 - BaseStep: Abstract base class for all pipeline steps
 - StepRegistry: Global registry for step type management
-- Utility functions and decorators
+- Registration utilities and auto-discovery
+- Validation and debugging tools
 
-Quick Start:
------------
-```python
-from orchestrator.steps.base import BaseStep, StepRegistry, register_step
-
-# Method 1: Direct registration
-class MyStep(BaseStep):
-    def execute(self, context):
-        return {'status': 'success', 'outputs': {}, 'metadata': {}}
-
-StepRegistry.register('my_step', MyStep)
-
-# Method 2: Decorator registration
-@register_step('my_step_decorated', category='example')
-class MyDecoratedStep(BaseStep):
-    def execute(self, context):
-        return {'status': 'success', 'outputs': {}, 'metadata': {}}
-```
-
-Development Workflow:
---------------------
-1. Create step class inheriting from BaseStep
-2. Implement execute() method returning Dict
-3. Register with StepRegistry
-4. Test with MockStep if needed
-5. Use in JSON process definitions
+Enhanced Features:
+- Automatic step discovery and registration
+- Import error handling and fallback mechanisms
+- Comprehensive validation and debugging
+- Module health monitoring
 """
 
 import logging
+import warnings
+import importlib
 from typing import Dict, Any, List, Optional, Type, Union
+from pathlib import Path
 
 # Configure logging for the base module
 logger = logging.getLogger(__name__)
 
 # Version information
-__version__ = "1.0.0-dev"
+__version__ = "2.0.0"
 
 # Core imports with fail-fast error handling
 _BASE_STEP_AVAILABLE = False
@@ -82,6 +64,11 @@ except ImportError as e:
 # Check if core functionality is available
 _CORE_AVAILABLE = _BASE_STEP_AVAILABLE and _STEP_REGISTRY_AVAILABLE
 
+# Step registration tracking
+_REGISTRATION_ERRORS = {}
+_REGISTERED_MODULES = set()
+_REGISTRATION_LOG = []
+
 
 def is_base_available() -> bool:
     """Check if base step functionality is available."""
@@ -113,6 +100,253 @@ def get_missing_components() -> List[str]:
     return [name for name, available in status.items() if not available and name != 'core_available']
 
 
+# Enhanced registration functions
+def register_step_safe(step_type: str, 
+                      step_class: Type['BaseStep'],
+                      **kwargs) -> bool:
+    """
+    Safely register a step with comprehensive error handling and logging.
+    
+    Args:
+        step_type: Step type identifier
+        step_class: Step class
+        **kwargs: Additional registration parameters
+        
+    Returns:
+        True if registration successful, False otherwise
+    """
+    if not _STEP_REGISTRY_AVAILABLE:
+        error_msg = "StepRegistry not available for step registration"
+        logger.error(error_msg)
+        _REGISTRATION_ERRORS[step_type] = error_msg
+        return False
+    
+    try:
+        # Validate step class before registration
+        if BaseStep and not issubclass(step_class, BaseStep):
+            error_msg = f"Step class {step_class.__name__} must inherit from BaseStep"
+            logger.error(error_msg)
+            _REGISTRATION_ERRORS[step_type] = error_msg
+            return False
+            
+        # Register with StepRegistry
+        StepRegistry.register(step_type, step_class, **kwargs)
+        
+        # Log successful registration
+        log_entry = {
+            'step_type': step_type,
+            'class_name': step_class.__name__,
+            'module': step_class.__module__,
+            'status': 'success'
+        }
+        _REGISTRATION_LOG.append(log_entry)
+        
+        logger.info(f"✓ Successfully registered step: {step_type} -> {step_class.__name__}")
+        return True
+        
+    except Exception as e:
+        error_msg = f"Failed to register step '{step_type}': {e}"
+        logger.error(error_msg)
+        _REGISTRATION_ERRORS[step_type] = error_msg
+        
+        # Log failed registration
+        log_entry = {
+            'step_type': step_type,
+            'class_name': step_class.__name__,
+            'module': step_class.__module__,
+            'status': 'failed',
+            'error': str(e)
+        }
+        _REGISTRATION_LOG.append(log_entry)
+        
+        return False
+
+
+def auto_register_step_modules() -> Dict[str, Any]:
+    """
+    Automatically discover and register step modules from standard locations.
+    
+    Returns:
+        Registration summary with success/failure counts
+    """
+    if not _CORE_AVAILABLE:
+        logger.warning("Core functionality not available for auto-registration")
+        return {'success': 0, 'failed': 0, 'errors': ['Core functionality not available']}
+    
+    # Standard step module locations
+    step_module_paths = [
+        'orchestrator.steps.data_acquisition',
+        'orchestrator.steps.preprocessing', 
+        'orchestrator.steps.feature_extraction',
+        'orchestrator.steps.segmentation',
+        'orchestrator.steps.modeling',
+        'orchestrator.steps.prediction',
+        'orchestrator.steps.visualization'
+    ]
+    
+    success_count = 0
+    failed_count = 0
+    registration_errors = []
+    
+    for module_path in step_module_paths:
+        try:
+            # Try to import the module
+            module = importlib.import_module(module_path)
+            _REGISTERED_MODULES.add(module_path)
+            
+            # Module imports trigger step registrations through __init__.py
+            logger.debug(f"✓ Successfully imported step module: {module_path}")
+            success_count += 1
+            
+        except ImportError as e:
+            logger.debug(f"Step module not available: {module_path} ({e})")
+            failed_count += 1
+            registration_errors.append(f"{module_path}: {e}")
+        except Exception as e:
+            logger.warning(f"Error importing step module {module_path}: {e}")
+            failed_count += 1
+            registration_errors.append(f"{module_path}: {e}")
+    
+    # Log summary
+    if success_count > 0:
+        logger.info(f"✓ Auto-registered {success_count} step modules")
+    if failed_count > 0:
+        logger.debug(f"⚠ {failed_count} step modules not available")
+    
+    return {
+        'success': success_count,
+        'failed': failed_count,
+        'errors': registration_errors,
+        'registered_modules': list(_REGISTERED_MODULES)
+    }
+
+
+def validate_all_registrations() -> Dict[str, Any]:
+    """
+    Validate all current step registrations.
+    
+    Returns:
+        Validation summary with details of any issues
+    """
+    if not _STEP_REGISTRY_AVAILABLE:
+        return {
+            'valid': False,
+            'error': 'StepRegistry not available',
+            'details': {}
+        }
+    
+    try:
+        registered_types = StepRegistry.get_registered_types()
+        validation_results = {}
+        
+        for step_type in registered_types:
+            try:
+                step_class = StepRegistry.get_step_class(step_type)
+                
+                # Basic validation
+                validation_errors = []
+                if not hasattr(step_class, 'execute'):
+                    validation_errors.append("Missing execute method")
+                
+                if BaseStep and not issubclass(step_class, BaseStep):
+                    validation_errors.append("Does not inherit from BaseStep")
+                
+                validation_results[step_type] = {
+                    'valid': len(validation_errors) == 0,
+                    'class_name': step_class.__name__,
+                    'module': step_class.__module__,
+                    'errors': validation_errors
+                }
+                
+            except Exception as e:
+                validation_results[step_type] = {
+                    'valid': False,
+                    'error': str(e)
+                }
+        
+        # Overall summary
+        valid_count = sum(1 for r in validation_results.values() if r.get('valid', False))
+        total_count = len(validation_results)
+        
+        return {
+            'valid': valid_count == total_count,
+            'summary': {
+                'total': total_count,
+                'valid': valid_count,
+                'invalid': total_count - valid_count
+            },
+            'details': validation_results
+        }
+        
+    except Exception as e:
+        return {
+            'valid': False,
+            'error': f"Validation failed: {e}",
+            'details': {}
+        }
+
+
+def get_registration_status() -> Dict[str, Any]:
+    """Get comprehensive registration status and debugging information.""" 
+    status = {
+        'core_available': _CORE_AVAILABLE,
+        'component_status': get_component_status(),
+        'registered_modules': list(_REGISTERED_MODULES),
+        'registration_log': _REGISTRATION_LOG.copy(),
+        'registration_errors': _REGISTRATION_ERRORS.copy()
+    }
+    
+    if _STEP_REGISTRY_AVAILABLE:
+        try:
+            status['registered_steps'] = StepRegistry.get_registered_types()
+            status['step_count'] = len(status['registered_steps'])
+            status['registry_stats'] = StepRegistry.get_registry_stats()
+        except Exception as e:
+            status['registry_error'] = str(e)
+    
+    return status
+
+
+def print_registration_status():
+    """Print detailed registration status for debugging."""
+    status = get_registration_status()
+    
+    print("=" * 60)
+    print("STEP REGISTRATION STATUS")
+    print("=" * 60)
+    
+    # Core status
+    print(f"Core Available: {status['core_available']}")
+    print(f"BaseStep Available: {status['component_status']['base_step']}")
+    print(f"Registry Available: {status['component_status']['step_registry']}")
+    
+    # Registered modules
+    print(f"\nRegistered Modules ({len(status['registered_modules'])}):")
+    for module in status['registered_modules']:
+        print(f"  ✓ {module}")
+    
+    # Registered steps
+    if 'registered_steps' in status:
+        print(f"\nRegistered Steps ({status['step_count']}):")
+        for step_type in status['registered_steps']:
+            print(f"  ✓ {step_type}")
+    
+    # Registration errors
+    if status['registration_errors']:
+        print(f"\nRegistration Errors ({len(status['registration_errors'])}):")
+        for step_type, error in status['registration_errors'].items():
+            print(f"  ✗ {step_type}: {error}")
+    
+    # Recent registrations
+    if status['registration_log']:
+        print(f"\nRecent Registrations ({len(status['registration_log'])}):")
+        for entry in status['registration_log'][-10:]:  # Show last 10
+            status_icon = "✓" if entry['status'] == 'success' else "✗"
+            print(f"  {status_icon} {entry['step_type']} -> {entry['class_name']}")
+    
+    print("=" * 60)
+
+
 # Convenience functions with fail-fast support
 def create_step(step_config: Dict[str, Any]) -> Optional['BaseStep']:
     """
@@ -129,36 +363,12 @@ def create_step(step_config: Dict[str, Any]) -> Optional['BaseStep']:
         return None
     
     try:
-        return StepRegistry.create_step(step_config)
+        # Extract step_id if present, otherwise use step type
+        step_id = step_config.get('id', step_config.get('type', 'unnamed_step'))
+        return StepRegistry.create_step(step_id, step_config)
     except Exception as e:
         logger.error(f"Failed to create step: {e}")
         return None
-
-
-def register_step_safe(step_type: str, 
-                      step_class: Type['BaseStep'],
-                      **kwargs) -> bool:
-    """
-    Safely register a step with error handling.
-    
-    Args:
-        step_type: Step type identifier
-        step_class: Step class
-        **kwargs: Additional registration parameters
-        
-    Returns:
-        True if registration successful, False otherwise
-    """
-    if not _STEP_REGISTRY_AVAILABLE:
-        logger.error("StepRegistry not available for step registration")
-        return False
-    
-    try:
-        StepRegistry.register(step_type, step_class, **kwargs)
-        return True
-    except Exception as e:
-        logger.error(f"Failed to register step '{step_type}': {e}")
-        return False
 
 
 def get_step_types() -> List[str]:
@@ -232,7 +442,7 @@ def _register_builtin_steps():
     try:
         # Register MockStep if available
         if MockStep:
-            StepRegistry.register(
+            success = register_step_safe(
                 'mock',
                 MockStep,
                 category='testing',
@@ -242,7 +452,8 @@ def _register_builtin_steps():
                     'builtin': True
                 }
             )
-            logger.debug("Registered built-in MockStep")
+            if success:
+                logger.debug("✓ Registered built-in MockStep")
     
     except Exception as e:
         logger.debug(f"Failed to register built-in steps: {e}")
@@ -254,91 +465,121 @@ def quick_test() -> Dict[str, Any]:
     Run quick test of base module functionality.
     
     Returns:
-        Dictionary with test results
+        Test results summary
     """
     test_results = {
-        'component_status': get_component_status(),
-        'core_available': is_core_available(),
-        'tests': {}
-    }
-    
-    # Test 1: Component imports
-    test_results['tests']['imports'] = {
-        'status': 'success' if _CORE_AVAILABLE else 'failed',
-        'details': f"Core available: {_CORE_AVAILABLE}"
-    }
-    
-    # Test 2: Mock step creation
-    if _BASE_STEP_AVAILABLE:
-        try:
-            mock_step = create_mock_step_safe('test_mock', 'mock_test')
-            if mock_step:
-                test_results['tests']['mock_creation'] = {
-                    'status': 'success',
-                    'details': f"Created mock step: {mock_step}"
-                }
-            else:
-                test_results['tests']['mock_creation'] = {
-                    'status': 'failed',
-                    'details': "Mock step creation returned None"
-                }
-        except Exception as e:
-            test_results['tests']['mock_creation'] = {
-                'status': 'failed',
-                'details': f"Mock step creation failed: {e}"
-            }
-    else:
-        test_results['tests']['mock_creation'] = {
-            'status': 'skipped',
-            'details': "BaseStep not available"
+        'tests': {},
+        'summary': {
+            'total_tests': 0,
+            'passed': 0,
+            'failed': 0,
+            'skipped': 0,
+            'overall_status': 'unknown'
         }
+    }
     
-    # Test 3: Registry operations
+    # Test 1: Component availability
+    test_results['tests']['component_availability'] = {
+        'status': 'success' if _CORE_AVAILABLE else 'failed',
+        'details': get_component_status()
+    }
+    test_results['summary']['total_tests'] += 1
+    if _CORE_AVAILABLE:
+        test_results['summary']['passed'] += 1
+    else:
+        test_results['summary']['failed'] += 1
+    
+    # Test 2: Auto-registration
+    if _CORE_AVAILABLE:
+        try:
+            reg_results = auto_register_step_modules()
+            test_results['tests']['auto_registration'] = {
+                'status': 'success' if reg_results['success'] > 0 else 'partial',
+                'details': reg_results
+            }
+            test_results['summary']['total_tests'] += 1
+            if reg_results['success'] > 0:
+                test_results['summary']['passed'] += 1
+            else:
+                test_results['summary']['failed'] += 1
+        except Exception as e:
+            test_results['tests']['auto_registration'] = {
+                'status': 'failed',
+                'details': f"Auto-registration failed: {e}"
+            }
+            test_results['summary']['total_tests'] += 1
+            test_results['summary']['failed'] += 1
+    else:
+        test_results['tests']['auto_registration'] = {
+            'status': 'skipped',
+            'details': 'Core not available'
+        }
+        test_results['summary']['total_tests'] += 1
+        test_results['summary']['skipped'] += 1
+    
+    # Test 3: Step registry functionality
     if _STEP_REGISTRY_AVAILABLE:
         try:
-            # Test registration
-            class TestStep(BaseStep):
-                def execute(self, context):
-                    return {'status': 'success', 'outputs': {}, 'metadata': {}}
+            # Test basic registry operations
+            initial_count = len(get_step_types())
             
-            success = register_step_safe('test_registry_step', TestStep)
-            if success:
-                # Test retrieval
-                types = get_step_types()
-                if 'test_registry_step' in types:
-                    test_results['tests']['registry'] = {
-                        'status': 'success',
-                        'details': f"Registry test passed, {len(types)} types available"
-                    }
+            # Test mock step registration
+            if MockStep:
+                success = register_step_safe('test_registry_step', MockStep)
+                if success:
+                    # Test retrieval
+                    types = get_step_types()
+                    if 'test_registry_step' in types and len(types) > initial_count:
+                        test_results['tests']['registry_operations'] = {
+                            'status': 'success',
+                            'details': f"Registry test passed, {len(types)} types available"
+                        }
+                    else:
+                        test_results['tests']['registry_operations'] = {
+                            'status': 'failed',
+                            'details': "Step not found after registration"
+                        }
+                    
+                    # Cleanup
+                    try:
+                        StepRegistry.unregister('test_registry_step')
+                    except:
+                        pass
                 else:
-                    test_results['tests']['registry'] = {
+                    test_results['tests']['registry_operations'] = {
                         'status': 'failed',
-                        'details': "Step not found after registration"
+                        'details': "Step registration failed"
                     }
-                
-                # Cleanup
-                try:
-                    StepRegistry.unregister('test_registry_step')
-                except:
-                    pass
             else:
-                test_results['tests']['registry'] = {
-                    'status': 'failed',
-                    'details': "Step registration failed"
+                test_results['tests']['registry_operations'] = {
+                    'status': 'skipped',
+                    'details': "MockStep not available"
                 }
                 
+            test_results['summary']['total_tests'] += 1
+            if test_results['tests']['registry_operations']['status'] == 'success':
+                test_results['summary']['passed'] += 1
+            elif test_results['tests']['registry_operations']['status'] == 'failed':
+                test_results['summary']['failed'] += 1
+            else:
+                test_results['summary']['skipped'] += 1
+                
         except Exception as e:
-            test_results['tests']['registry'] = {
+            test_results['tests']['registry_operations'] = {
                 'status': 'failed',
                 'details': f"Registry test failed: {e}"
             }
+            test_results['summary']['total_tests'] += 1
+            test_results['summary']['failed'] += 1
     else:
-        test_results['tests']['registry'] = {
+        test_results['tests']['registry_operations'] = {
             'status': 'skipped',
             'details': "StepRegistry not available"
         }
+        test_results['summary']['total_tests'] += 1
+        test_results['summary']['skipped'] += 1
     
-    # Test 4: Step validation
+    # Test 4: Validation functionality
     if _BASE_STEP_AVAILABLE:
         try:
             class ValidStep(BaseStep):
@@ -346,100 +587,90 @@ def quick_test() -> Dict[str, Any]:
                     return {'status': 'success', 'outputs': {}, 'metadata': {}}
             
             errors = validate_step_class(ValidStep)
-            if not errors:
-                test_results['tests']['validation'] = {
-                    'status': 'success',
-                    'details': "Step validation passed"
-                }
+            test_results['tests']['validation'] = {
+                'status': 'success' if len(errors) == 0 else 'failed',
+                'details': f"Validation errors: {errors}" if errors else "Validation passed"
+            }
+            
+            test_results['summary']['total_tests'] += 1
+            if len(errors) == 0:
+                test_results['summary']['passed'] += 1
             else:
-                test_results['tests']['validation'] = {
-                    'status': 'failed',
-                    'details': f"Validation errors: {errors}"
-                }
+                test_results['summary']['failed'] += 1
+                
         except Exception as e:
             test_results['tests']['validation'] = {
                 'status': 'failed',
                 'details': f"Validation test failed: {e}"
             }
+            test_results['summary']['total_tests'] += 1
+            test_results['summary']['failed'] += 1
     else:
         test_results['tests']['validation'] = {
             'status': 'skipped',
             'details': "BaseStep not available"
         }
+        test_results['summary']['total_tests'] += 1
+        test_results['summary']['skipped'] += 1
     
-    # Calculate overall status
-    test_statuses = [test['status'] for test in test_results['tests'].values()]
-    failed_count = sum(1 for status in test_statuses if status == 'failed')
-    
-    test_results['summary'] = {
-        'total_tests': len(test_statuses),
-        'passed': sum(1 for status in test_statuses if status == 'success'),
-        'failed': failed_count,
-        'skipped': sum(1 for status in test_statuses if status == 'skipped'),
-        'overall_status': 'success' if failed_count == 0 else 'failed'
-    }
+    # Determine overall status
+    if test_results['summary']['failed'] == 0:
+        if test_results['summary']['passed'] > 0:
+            test_results['summary']['overall_status'] = 'success'
+        else:
+            test_results['summary']['overall_status'] = 'skipped'
+    else:
+        test_results['summary']['overall_status'] = 'failed'
     
     return test_results
 
 
 def print_status():
-    """Print comprehensive status of the base module."""
-    print(f"\n=== Steps Base Module v{__version__} ===")
+    """Print current module status."""
+    print("Steps Base Module Status")
+    print("=" * 30)
+    print(f"Version: {__version__}")
+    print(f"Core Available: {_CORE_AVAILABLE}")
+    print(f"BaseStep Available: {_BASE_STEP_AVAILABLE}")
+    print(f"Registry Available: {_STEP_REGISTRY_AVAILABLE}")
     
-    status = get_component_status()
-    print(f"Core Available: {status['core_available']}")
-    
-    print("\nComponent Status:")
-    for component, available in status.items():
-        if component != 'core_available':
-            status_icon = "✓" if available else "✗"
-            print(f"  {status_icon} {component}")
-    
-    if not status['core_available']:
-        missing = get_missing_components()
-        print(f"\nMissing Components: {missing}")
-    
-    # Show available step types if registry is available
     if _STEP_REGISTRY_AVAILABLE:
         try:
-            types = get_step_types()
-            if types:
-                print(f"\nRegistered Step Types ({len(types)}):")
-                for step_type in sorted(types):
-                    print(f"  • {step_type}")
-            else:
-                print("\nNo step types registered yet")
-        except Exception as e:
-            print(f"\nCould not get step types: {e}")
+            step_count = len(get_step_types())
+            print(f"Registered Steps: {step_count}")
+        except:
+            print("Registered Steps: Unknown")
+    
+    missing = get_missing_components()
+    if missing:
+        print(f"Missing Components: {missing}")
+    else:
+        print("All Components Available: ✓")
 
 
 def get_help() -> str:
-    """Get help text for the base module."""
+    """Get help information for the base module."""
     return """
 Steps Base Module Help
 =====================
 
-This module provides the foundation for implementing pipeline steps.
-CORRECTED to use Dict return types instead of StepResult.
-
-Core Classes:
-- BaseStep: Abstract base class for all steps
-- StepRegistry: Global registry for step types
-- MockStep: Mock implementation for testing
-
-Key Functions:
-- create_step(config): Create step from configuration
-- register_step_safe(type, class): Register step type
-- get_step_types(): Get available step types
-- validate_step_class(class): Validate step implementation
-
-Development Workflow:
+Quick Start:
 1. Import base classes: from orchestrator.steps.base import BaseStep, StepRegistry
 2. Create step class inheriting from BaseStep
 3. Implement execute() method returning Dict with 'status', 'outputs', 'metadata'
-4. Register step: StepRegistry.register('step_type', StepClass)
+4. Register step: register_step_safe('step_type', StepClass)
 5. Test with create_mock_step() or MockStep
 6. Use in JSON process definitions
+
+Auto-Registration:
+- Call auto_register_step_modules() to discover and register all step modules
+- Check registration status with print_registration_status()
+- Validate registrations with validate_all_registrations()
+
+Debugging:
+- Use print_status() to check module health
+- Use quick_test() for comprehensive testing
+- Use get_registration_status() for detailed debugging
 
 For detailed documentation, see individual class docstrings.
 """
@@ -447,27 +678,32 @@ For detailed documentation, see individual class docstrings.
 
 # Initialize module
 def _initialize_module():
-    """Initialize the base module."""
+    """Initialize the base module with enhanced registration."""
     logger.info(f"Initializing steps base module v{__version__}")
     
     # Log component status
     status = get_component_status()
     if status['core_available']:
         logger.info("✓ Core base functionality available")
-    else:
-        missing = get_missing_components()
-        logger.warning(f"⚠ Core functionality incomplete, missing: {missing}")
-    
-    # Register built-in steps
-    if _CORE_AVAILABLE:
+        
+        # Register built-in steps
         _register_builtin_steps()
         
-        # Log registry status
+        # Auto-register step modules
+        reg_results = auto_register_step_modules()
+        if reg_results['success'] > 0:
+            logger.info(f"✓ Auto-registered {reg_results['success']} step modules")
+        
+        # Log final registry status
         try:
             type_count = len(get_step_types())
             logger.info(f"Step registry initialized with {type_count} types")
         except:
             logger.debug("Could not get initial step type count")
+            
+    else:
+        missing = get_missing_components()
+        logger.warning(f"⚠ Core functionality incomplete, missing: {missing}")
 
 
 # Export public API
@@ -481,9 +717,15 @@ __all__ = [
     'StepValidationError',
     'StepRegistrationError',
     
+    # Enhanced registration functions
+    'register_step_safe',
+    'auto_register_step_modules',
+    'validate_all_registrations',
+    'get_registration_status',
+    'print_registration_status',
+    
     # Utility functions
     'create_step',
-    'register_step_safe',
     'get_step_types',
     'validate_step_class',
     'create_mock_step_safe',
@@ -513,13 +755,19 @@ _initialize_module()
 
 # Quick test when run directly
 if __name__ == "__main__":
-    print("Running steps base module test...")
+    print("Running enhanced steps base module test...")
     
     # Print status
     print_status()
     
+    # Print registration status
+    print("\n")
+    print_registration_status()
+    
     # Run comprehensive test
-    print("\n" + "="*50)
+    print("\n" + "="*60)
+    print("COMPREHENSIVE FUNCTIONALITY TEST")
+    print("="*60)
     results = quick_test()
     
     print(f"\nTest Results:")
@@ -540,6 +788,18 @@ if __name__ == "__main__":
     if not is_core_available():
         print(f"\nFor help getting started:")
         print("python -c \"from orchestrator.steps.base import get_help; print(get_help())\"")
+    
+    # Validation test
+    print(f"\n" + "="*60)
+    print("REGISTRATION VALIDATION")
+    print("="*60)
+    validation = validate_all_registrations()
+    if validation['valid']:
+        print("✓ All registrations are valid")
+    else:
+        print(f"✗ Registration issues found: {validation.get('error', 'See details')}")
+        if 'summary' in validation:
+            print(f"Valid: {validation['summary']['valid']}/{validation['summary']['total']}")
     
     # Exit with appropriate code
     exit_code = 0 if results['summary']['overall_status'] == 'success' else 1
