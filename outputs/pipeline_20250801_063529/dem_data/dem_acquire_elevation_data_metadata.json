@@ -1,0 +1,25 @@
+{
+  "bbox": [
+    85.3,
+    27.6,
+    85.4,
+    27.7
+  ],
+  "crs": "EPSG:4326",
+  "resolution": 90,
+  "shape": [
+    123,
+    123
+  ],
+  "source": "SRTM",
+  "units": "meters",
+  "nodata_value": NaN,
+  "vertical_accuracy": "\u00b116m",
+  "mock_data": true,
+  "statistics": {
+    "min": 1162.3985595703125,
+    "max": 1918.455078125,
+    "mean": 1519.05712890625,
+    "std": 122.95103454589844
+  }
+}

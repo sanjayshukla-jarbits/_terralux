@@ -4,13 +4,12 @@ Data Acquisition Module for Modular Pipeline Orchestrator
 
 This module provides comprehensive data acquisition capabilities for geospatial
 analysis pipelines, designed with fail-fast principles for rapid development.
-CORRECTED for compatibility with ModularOrchestrator architecture.
+CORRECTED: Updated to use only real_sentinel_hub_step.py (removed sentinel_hub_step.py)
 
 Key Features:
 - Multi-source satellite data acquisition (Sentinel-2, Landsat, etc.)
 - Digital Elevation Model (DEM) acquisition from various sources
 - Local file discovery and validation
-- Integration with existing landslide_pipeline infrastructure
 - Mock data generation for testing and development
 - Comprehensive error handling and fallback mechanisms
 
@@ -28,7 +27,7 @@ from orchestrator.steps.data_acquisition import *
 
 # Or import specific steps
 from orchestrator.steps.data_acquisition import (
-    RealSentinelHubAcquisitionStep, LocalFilesStep
+    RealSentinelHubAcquisitionStep, LocalFilesStep, DEMAcquisitionStep
 )
 
 # Check available step types
@@ -74,15 +73,16 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # Version information
-__version__ = "1.0.0-failfast"  # CORRECTED: Updated version
+__version__ = "1.0.0-corrected"  # CORRECTED: Updated version
 __author__ = "Data Acquisition Team"
 
 # Core step imports with error handling for fail-fast approach
 _STEP_IMPORTS_SUCCESSFUL = {}
 _AVAILABLE_STEPS = []
 _STEP_ALIASES = {}
+_EXISTING_PIPELINE_AVAILABLE = False
 
-# CORRECTED: Import RealSentinelHubAcquisitionStep instead of SentinelHubStep
+# CORRECTED: Import RealSentinelHubAcquisitionStep only (removed old sentinel_hub_step)
 try:
     from .real_sentinel_hub_step import RealSentinelHubAcquisitionStep
     _STEP_IMPORTS_SUCCESSFUL['real_sentinel_hub_step'] = True
@@ -94,16 +94,18 @@ try:
     })
     logger.debug("Successfully imported RealSentinelHubAcquisitionStep")
     
-    # Make available under both names for compatibility
+    # CORRECTED: Create alias for backward compatibility
     SentinelHubStep = RealSentinelHubAcquisitionStep
+    SentinelHubAcquisitionStep = RealSentinelHubAcquisitionStep  # For compatibility
     
 except ImportError as e:
     logger.warning(f"Failed to import RealSentinelHubAcquisitionStep: {e}")
     _STEP_IMPORTS_SUCCESSFUL['real_sentinel_hub_step'] = False
     RealSentinelHubAcquisitionStep = None
     SentinelHubStep = None
+    SentinelHubAcquisitionStep = None
 
-# CORRECTED: Try to import LocalFilesStep with better error handling
+# CORRECTED: Import LocalFilesStep with better error handling
 try:
     from .local_files_step import LocalFilesStep
     _STEP_IMPORTS_SUCCESSFUL['local_files_step'] = True
@@ -123,7 +125,7 @@ except SyntaxError as e:
     _STEP_IMPORTS_SUCCESSFUL['local_files_step'] = False
     LocalFilesStep = None
 
-# CORRECTED: Try to import DEM step with better error handling
+# CORRECTED: Import DEM step with better error handling
 try:
     from .dem_acquisition_step import DEMAcquisitionStep
     _STEP_IMPORTS_SUCCESSFUL['dem_acquisition_step'] = True
@@ -138,21 +140,19 @@ except ImportError as e:
     logger.warning(f"Failed to import DEMAcquisitionStep: {e}")
     _STEP_IMPORTS_SUCCESSFUL['dem_acquisition_step'] = False
     DEMAcquisitionStep = None
-except Exception as e:
-    logger.warning(f"Error importing DEMAcquisitionStep: {e}")
-    _STEP_IMPORTS_SUCCESSFUL['dem_acquisition_step'] = False
-    DEMAcquisitionStep = None
 
-# Optional/experimental steps (import without failing)
+# Optional step imports (may not be available)
+CopernicusHubStep = None
+LandsatAcquisitionStep = None
+
 try:
     from .copernicus_hub_step import CopernicusHubStep
     _STEP_IMPORTS_SUCCESSFUL['copernicus_hub_step'] = True
     _AVAILABLE_STEPS.append('copernicus_hub_acquisition')
     logger.debug("Successfully imported CopernicusHubStep")
 except ImportError:
-    _STEP_IMPORTS_SUCCESSFUL['copernicus_hub_step'] = False
-    CopernicusHubStep = None
     logger.debug("CopernicusHubStep not available (optional)")
+    _STEP_IMPORTS_SUCCESSFUL['copernicus_hub_step'] = False
 
 try:
     from .landsat_acquisition_step import LandsatAcquisitionStep
@@ -160,105 +160,112 @@ try:
     _AVAILABLE_STEPS.append('landsat_acquisition')
     logger.debug("Successfully imported LandsatAcquisitionStep")
 except ImportError:
-    _STEP_IMPORTS_SUCCESSFUL['landsat_acquisition_step'] = False
-    LandsatAcquisitionStep = None
     logger.debug("LandsatAcquisitionStep not available (optional)")
+    _STEP_IMPORTS_SUCCESSFUL['landsat_acquisition_step'] = False
 
-# Integration with existing landslide_pipeline
+# CORRECTED: Check for existing landslide_pipeline integration
+DataAcquisitionFactory = None
+FilePathManager = None
+
 try:
-    from landslide_pipeline.data.data_acquisition import DataAcquisitionFactory
-    from landslide_pipeline.utils.file_path_manager import FilePathManager
+    # Try to import existing landslide_pipeline components
+    from landslide_pipeline.data_acquisition import DataAcquisitionFactory, FilePathManager
     _EXISTING_PIPELINE_AVAILABLE = True
     logger.debug("Existing landslide_pipeline integration available")
 except ImportError:
-    DataAcquisitionFactory = None
-    FilePathManager = None
-    _EXISTING_PIPELINE_AVAILABLE = False
     logger.debug("Existing landslide_pipeline not available")
 
+# Initialize the module
+logger.info(f"Initializing data acquisition module v{__version__}")
+logger.info(f"Step imports: {sum(_STEP_IMPORTS_SUCCESSFUL.values())}/{len(_STEP_IMPORTS_SUCCESSFUL)} successful")
+logger.info(f"Available steps: {_AVAILABLE_STEPS}")
 
+if _EXISTING_PIPELINE_AVAILABLE:
+    logger.info("✓ Existing landslide_pipeline integration available")
+else:
+    logger.debug("Existing landslide_pipeline integration not available")
+
+# CORRECTED: Issue warning if no step implementations are available
+if sum(_STEP_IMPORTS_SUCCESSFUL.values()) == 0:
+    warnings.warn(
+        "No step implementations are available. Using mock implementations only. "
+        "Install step dependencies for full functionality.",
+        RuntimeWarning
+    )
+
+# Utility functions
 def get_import_status() -> Dict[str, bool]:
-    """
-    Get the import status of all data acquisition steps.
-    
-    Returns:
-        Dictionary mapping step names to import success status
-    """
+    """Get the import status of all step modules."""
     return _STEP_IMPORTS_SUCCESSFUL.copy()
 
-
 def get_available_data_acquisition_steps() -> List[str]:
-    """
-    Get list of available data acquisition step types.
-    
-    Returns:
-        List of available step type identifiers
-    """
+    """Get list of available data acquisition step types."""
     return _AVAILABLE_STEPS.copy()
 
-
 def get_step_aliases() -> Dict[str, str]:
-    """
-    Get mapping of step aliases to canonical step types.
-    
-    Returns:
-        Dictionary mapping aliases to step types
-    """
+    """Get mapping of step aliases to canonical names."""
     return _STEP_ALIASES.copy()
 
-
 def is_step_available(step_type: str) -> bool:
-    """
-    Check if a specific step type is available.
-    
-    Args:
-        step_type: Step type identifier or alias
-        
-    Returns:
-        True if step is available, False otherwise
-    """
-    # Check direct step type
-    if step_type in _AVAILABLE_STEPS:
-        return True
-    
-    # Check aliases
-    if step_type in _STEP_ALIASES:
-        canonical_type = _STEP_ALIASES[step_type]
-        return canonical_type in _AVAILABLE_STEPS
-    
-    return False
-
+    """Check if a specific step type is available."""
+    # Check both canonical names and aliases
+    return step_type in _AVAILABLE_STEPS or step_type in _STEP_ALIASES
 
 def get_missing_dependencies() -> List[str]:
-    """
-    Get list of missing dependencies for data acquisition steps.
-    
-    Returns:
-        List of missing dependency information
-    """
+    """Get list of missing dependencies."""
     missing = []
     
-    # Check for failed imports
-    for step_name, success in _STEP_IMPORTS_SUCCESSFUL.items():
-        if not success:
-            missing.append(f"Step module: {step_name}")
-    
-    # CORRECTED: Don't call validation functions that may not exist
+    # Check for missing required libraries
     if not RealSentinelHubAcquisitionStep:
-        missing.append("Sentinel Hub: Real implementation not available")
+        missing.append("sentinelhub (pip install sentinelhub)")
     
     if not DEMAcquisitionStep:
-        missing.append("DEM acquisition: Implementation not available")
+        missing.append("elevation/rasterio libraries")
     
     if not LocalFilesStep:
-        missing.append("Local files: Implementation not available")
+        missing.append("geopandas/rasterio libraries")
     
     return missing
 
+def print_module_status():
+    """Print comprehensive module status information."""
+    print(f"\n📡 Data Acquisition Module Status (v{__version__})")
+    print("=" * 50)
+    
+    # Import status
+    print("\n🔧 Import Status:")
+    for module, status in _STEP_IMPORTS_SUCCESSFUL.items():
+        status_icon = "✓" if status else "❌"
+        print(f"  {status_icon} {module}")
+    
+    # Available steps
+    print(f"\n🚀 Available Steps ({len(_AVAILABLE_STEPS)}):")
+    for step in _AVAILABLE_STEPS:
+        print(f"  • {step}")
+    
+    # Aliases
+    if _STEP_ALIASES:
+        print(f"\n🔗 Step Aliases ({len(_STEP_ALIASES)}):")
+        for alias, canonical in _STEP_ALIASES.items():
+            print(f"  • {alias} → {canonical}")
+    
+    # Missing dependencies
+    missing = get_missing_dependencies()
+    if missing:
+        print(f"\n⚠️  Missing Dependencies ({len(missing)}):")
+        for dep in missing:
+            print(f"  • {dep}")
+    
+    # Integration status
+    print(f"\n🔌 Integration Status:")
+    integration_icon = "✓" if _EXISTING_PIPELINE_AVAILABLE else "❌"
+    print(f"  {integration_icon} Existing landslide_pipeline integration")
+    
+    print("\n" + "=" * 50)
 
 def validate_data_acquisition_setup() -> Dict[str, Any]:
     """
-    Validate the complete data acquisition setup.
+    Validate the data acquisition setup.
     
     Returns:
         Comprehensive validation results
@@ -275,21 +282,43 @@ def validate_data_acquisition_setup() -> Dict[str, Any]:
         'capabilities': {}
     }
     
-    # CORRECTED: Simple validation without calling non-existent functions
+    # Validate individual steps
     if RealSentinelHubAcquisitionStep:
-        validation_results['step_validations']['sentinel_hub'] = {'status': 'available', 'type': 'real'}
+        validation_results['step_validations']['sentinel_hub'] = {
+            'status': 'available', 
+            'type': 'real',
+            'class': 'RealSentinelHubAcquisitionStep'
+        }
     else:
-        validation_results['step_validations']['sentinel_hub'] = {'status': 'unavailable', 'reason': 'import_failed'}
+        validation_results['step_validations']['sentinel_hub'] = {
+            'status': 'unavailable', 
+            'reason': 'import_failed'
+        }
+        validation_results['warnings'].append("Sentinel Hub step unavailable - install sentinelhub library")
     
     if DEMAcquisitionStep:
-        validation_results['step_validations']['dem'] = {'status': 'available'}
+        validation_results['step_validations']['dem'] = {
+            'status': 'available',
+            'class': 'DEMAcquisitionStep'
+        }
     else:
-        validation_results['step_validations']['dem'] = {'status': 'unavailable', 'reason': 'import_failed'}
+        validation_results['step_validations']['dem'] = {
+            'status': 'unavailable', 
+            'reason': 'import_failed'
+        }
+        validation_results['warnings'].append("DEM acquisition step unavailable")
     
     if LocalFilesStep:
-        validation_results['step_validations']['local_files'] = {'status': 'available'}
+        validation_results['step_validations']['local_files'] = {
+            'status': 'available',
+            'class': 'LocalFilesStep'
+        }
     else:
-        validation_results['step_validations']['local_files'] = {'status': 'unavailable', 'reason': 'import_failed'}
+        validation_results['step_validations']['local_files'] = {
+            'status': 'unavailable', 
+            'reason': 'import_failed'
+        }
+        validation_results['warnings'].append("Local files step unavailable")
     
     # Collect missing dependencies
     validation_results['missing_dependencies'] = get_missing_dependencies()
@@ -320,47 +349,69 @@ def validate_data_acquisition_setup() -> Dict[str, Any]:
     
     return validation_results
 
-
 def create_data_acquisition_workflow(workflow_type: str = 'standard', **config) -> Dict[str, Any]:
     """
     Create a standard data acquisition workflow configuration.
     
     Args:
-        workflow_type: Type of workflow ('standard', 'satellite_only', 'local_only', 'comprehensive')
-        **config: Workflow configuration parameters
+        workflow_type: Type of workflow ('standard', 'satellite_only', 'dem_only', 'local_only', 'multi_source')
+        **config: Additional configuration parameters
         
     Returns:
         Workflow configuration dictionary
     """
-    bbox = config.get('bbox', [85.3, 27.6, 85.4, 27.7])
-    start_date = config.get('start_date', '2023-01-01')
-    end_date = config.get('end_date', '2023-12-31')
-    area_name = config.get('area_name', 'study_area')
-    
     workflows = {
         'standard': {
-            'process_info': {
-                'name': f'Standard Data Acquisition - {area_name}',
-                'version': '1.0.0',
-                'description': 'Standard workflow with satellite and DEM data'
-            },
+            'name': 'Standard Data Acquisition',
             'steps': [
                 {
-                    'id': 'acquire_satellite_data',
+                    'id': 'satellite_data',
                     'type': 'sentinel_hub_acquisition',
                     'hyperparameters': {
-                        'bbox': bbox,
-                        'start_date': start_date,
-                        'end_date': end_date,
                         'data_collection': 'SENTINEL-2-L2A',
-                        'resolution': 20
+                        'resolution': 10,
+                        'max_cloud_coverage': 20
                     }
                 },
                 {
-                    'id': 'acquire_elevation_data',
+                    'id': 'elevation_data',
                     'type': 'dem_acquisition',
                     'hyperparameters': {
-                        'bbox': bbox,
+                        'source': 'SRTM',
+                        'resolution': 30
+                    }
+                },
+                {
+                    'id': 'local_files',
+                    'type': 'local_files_discovery',
+                    'hyperparameters': {
+                        'file_patterns': ['*.tif', '*.shp'],
+                        'recursive': True
+                    }
+                }
+            ]
+        },
+        'satellite_only': {
+            'name': 'Satellite Data Only',
+            'steps': [
+                {
+                    'id': 'satellite_data',
+                    'type': 'sentinel_hub_acquisition',
+                    'hyperparameters': {
+                        'data_collection': 'SENTINEL-2-L2A',
+                        'resolution': 10,
+                        'bands': ['B02', 'B03', 'B04', 'B08']
+                    }
+                }
+            ]
+        },
+        'dem_only': {
+            'name': 'DEM Data Only',
+            'steps': [
+                {
+                    'id': 'elevation_data',
+                    'type': 'dem_acquisition',
+                    'hyperparameters': {
                         'source': 'SRTM',
                         'resolution': 30,
                         'generate_derivatives': True
@@ -368,85 +419,16 @@ def create_data_acquisition_workflow(workflow_type: str = 'standard', **config) 
                 }
             ]
         },
-        
-        'satellite_only': {
-            'process_info': {
-                'name': f'Satellite Data Acquisition - {area_name}',
-                'version': '1.0.0',
-                'description': 'Satellite data acquisition only'
-            },
-            'steps': [
-                {
-                    'id': 'acquire_satellite_data',
-                    'type': 'sentinel_hub_acquisition',
-                    'hyperparameters': {
-                        'bbox': bbox,
-                        'start_date': start_date,
-                        'end_date': end_date,
-                        'data_collection': 'SENTINEL-2-L2A',
-                        'resolution': 10,
-                        'bands': ['B02', 'B03', 'B04', 'B08', 'B11', 'B12']
-                    }
-                }
-            ]
-        },
-        
         'local_only': {
-            'process_info': {
-                'name': f'Local Files Discovery - {area_name}',
-                'version': '1.0.0',
-                'description': 'Local files discovery and validation'
-            },
+            'name': 'Local Files Only',
             'steps': [
                 {
-                    'id': 'discover_local_files',
+                    'id': 'local_files',
                     'type': 'local_files_discovery',
                     'hyperparameters': {
-                        'base_path': config.get('base_path', '/data/study_area'),
-                        'file_patterns': config.get('file_patterns', ['*.tif', '*.shp']),
                         'recursive': True,
                         'validate_files': True,
                         'load_metadata': True
-                    }
-                }
-            ]
-        },
-        
-        'comprehensive': {
-            'process_info': {
-                'name': f'Comprehensive Data Acquisition - {area_name}',
-                'version': '1.0.0',
-                'description': 'Multi-source comprehensive data acquisition'
-            },
-            'steps': [
-                {
-                    'id': 'acquire_satellite_data',
-                    'type': 'sentinel_hub_acquisition',
-                    'hyperparameters': {
-                        'bbox': bbox,
-                        'start_date': start_date,
-                        'end_date': end_date,
-                        'data_collection': 'SENTINEL-2-L2A',
-                        'resolution': 20
-                    }
-                },
-                {
-                    'id': 'acquire_elevation_data',
-                    'type': 'dem_acquisition',
-                    'hyperparameters': {
-                        'bbox': bbox,
-                        'source': 'SRTM',
-                        'resolution': 30,
-                        'generate_derivatives': True
-                    }
-                },
-                {
-                    'id': 'discover_local_files',
-                    'type': 'local_files_discovery',
-                    'hyperparameters': {
-                        'base_path': config.get('base_path', '/data/auxiliary'),
-                        'file_patterns': ['*.tif', '*.shp', '*.gpkg'],
-                        'recursive': True
                     }
                 }
             ]
@@ -454,10 +436,20 @@ def create_data_acquisition_workflow(workflow_type: str = 'standard', **config) 
     }
     
     if workflow_type not in workflows:
-        raise ValueError(f"Unknown workflow type: {workflow_type}. Available: {list(workflows.keys())}")
+        available_types = list(workflows.keys())
+        raise ValueError(f"Unknown workflow type '{workflow_type}'. Available: {available_types}")
     
-    return workflows[workflow_type]
-
+    workflow = workflows[workflow_type].copy()
+    
+    # Apply configuration overrides
+    for key, value in config.items():
+        if key in workflow:
+            workflow[key] = value
+    
+    logger.info(f"Created {workflow_type} workflow: {workflow['name']}")
+    logger.debug(f"Workflow steps: {[step['type'] for step in workflow['steps']]}")
+    
+    return workflow
 
 def run_quick_test() -> Dict[str, Any]:
     """
@@ -477,10 +469,9 @@ def run_quick_test() -> Dict[str, Any]:
         'overall_status': 'unknown'
     }
     
-    # Test each available step
     failed_tests = 0
     
-    # CORRECTED: Test RealSentinelHubAcquisitionStep
+    # Test RealSentinelHubAcquisitionStep
     if RealSentinelHubAcquisitionStep:
         try:
             test_config = {
@@ -509,7 +500,7 @@ def run_quick_test() -> Dict[str, Any]:
             'reason': 'Step not available'
         }
     
-    # CORRECTED: Test DEMAcquisitionStep
+    # Test DEMAcquisitionStep
     if DEMAcquisitionStep:
         try:
             test_config = {
@@ -538,15 +529,15 @@ def run_quick_test() -> Dict[str, Any]:
             'reason': 'Step not available'
         }
     
-    # CORRECTED: Test LocalFilesStep
+    # Test LocalFilesStep
     if LocalFilesStep:
         try:
             test_config = {
                 'type': 'local_files_discovery',
                 'hyperparameters': {
                     'base_path': '.',
-                    'generate_mock_if_empty': True,
-                    'file_patterns': ['*.tif']
+                    'file_patterns': ['*.tif'],
+                    'recursive': False
                 }
             }
             test_step = LocalFilesStep('test_local_files', test_config)
@@ -567,80 +558,28 @@ def run_quick_test() -> Dict[str, Any]:
             'reason': 'Step not available'
         }
     
-    # Determine overall status
-    total_tests = len([t for t in test_results['step_tests'].values() if t['status'] != 'skipped'])
-    if total_tests == 0:
-        test_results['overall_status'] = 'no_tests'
+    # Determine overall test status
+    total_available_steps = len([step for step in [RealSentinelHubAcquisitionStep, DEMAcquisitionStep, LocalFilesStep] if step is not None])
+    
+    if total_available_steps == 0:
+        test_results['overall_status'] = 'no_steps_available'
     elif failed_tests == 0:
         test_results['overall_status'] = 'success'
-    elif failed_tests < total_tests:
-        test_results['overall_status'] = 'partial'
+    elif failed_tests < total_available_steps:
+        test_results['overall_status'] = 'partial_success'
     else:
         test_results['overall_status'] = 'failed'
     
     return test_results
 
-
-def print_module_status():
-    """Print comprehensive status of the data acquisition module."""
-    print(f"\n=== Data Acquisition Module v{__version__} ===")
-    
-    # Import status
-    print("\nStep Import Status:")
-    for step_name, success in _STEP_IMPORTS_SUCCESSFUL.items():
-        status = "✓" if success else "✗"
-        print(f"  {status} {step_name}")
-    
-    # Available steps
-    if _AVAILABLE_STEPS:
-        print(f"\nAvailable Step Types ({len(_AVAILABLE_STEPS)}):")
-        for step_type in _AVAILABLE_STEPS:
-            print(f"  • {step_type}")
-    else:
-        print("\n⚠ No step types available")
-    
-    # Aliases
-    if _STEP_ALIASES:
-        print(f"\nStep Aliases ({len(_STEP_ALIASES)}):")
-        for alias, canonical in _STEP_ALIASES.items():
-            print(f"  • {alias} → {canonical}")
-    
-    # Validation summary
-    try:
-        validation = validate_data_acquisition_setup()
-        print(f"\nOverall Status: {validation['overall_status'].upper()}")
-        
-        if validation['capabilities']:
-            print("\nCapabilities:")
-            for capability, available in validation['capabilities'].items():
-                status = "✓" if available else "✗"
-                print(f"  {status} {capability}")
-        
-        if validation['missing_dependencies']:
-            print(f"\nMissing Dependencies ({len(validation['missing_dependencies'])}):")
-            for dep in validation['missing_dependencies'][:5]:  # Show first 5
-                print(f"  ⚠ {dep}")
-            if len(validation['missing_dependencies']) > 5:
-                print(f"  ... and {len(validation['missing_dependencies'])-5} more")
-    
-    except Exception as e:
-        print(f"\n⚠ Validation error: {e}")
-    
-    # Integration status
-    if _EXISTING_PIPELINE_AVAILABLE:
-        print("\n✓ Existing landslide_pipeline integration available")
-    else:
-        print("\n✗ Existing landslide_pipeline integration not available")
-
-
 def get_help() -> str:
-    """Get help text for the data acquisition module."""
+    """Get comprehensive help information for the data acquisition module."""
     return f"""
-Data Acquisition Module Help
-===========================
+Data Acquisition Module Help (v{__version__})
+{'=' * 50}
 
-This module provides comprehensive data acquisition capabilities for geospatial
-analysis pipelines with fail-fast development support.
+This module provides satellite data acquisition, DEM acquisition, and local file
+discovery capabilities for geospatial analysis pipelines.
 
 Available Step Types:
 {chr(10).join(f'  • {step}' for step in _AVAILABLE_STEPS)}
@@ -671,12 +610,12 @@ For detailed documentation, see individual step classes:
 - LocalFilesStep: Local file discovery and validation
 """
 
-
-# CORRECTED: Export public API with proper class names
+# CORRECTED: Export public API with proper class names (removed old imports)
 __all__ = [
     # Core step classes (may be None if not available)
     'RealSentinelHubAcquisitionStep',
-    'SentinelHubStep',  # Alias for compatibility
+    'SentinelHubStep',  # Alias for backward compatibility
+    'SentinelHubAcquisitionStep',  # Another alias for compatibility
     'DEMAcquisitionStep', 
     'LocalFilesStep',
     
@@ -705,7 +644,7 @@ __all__ = [
     '__author__'
 ]
 
-
+# Module initialization
 def _initialize_module():
     """Initialize the data acquisition module."""
     logger.info(f"Initializing data acquisition module v{__version__}")
@@ -719,50 +658,8 @@ def _initialize_module():
         logger.info(f"Available steps: {_AVAILABLE_STEPS}")
     else:
         logger.warning("No data acquisition steps available")
-    
-    # Log integration status
-    if _EXISTING_PIPELINE_AVAILABLE:
-        logger.info("Existing landslide_pipeline integration available")
-    else:
-        logger.debug("Existing landslide_pipeline integration not available")
-    
-    # CORRECTED: Issue warning if no step implementations are available
-    if successful_imports == 0:
-        warnings.warn(
-            "No step implementations are available. Using mock implementations only. "
-            "Install step dependencies for full functionality.",
-            RuntimeWarning
-        )
+        
+    logger.info("✓ _terralux orchestrator loaded (v1.0.0-terralux)")
 
-
-# Initialize module on import
+# Initialize on import
 _initialize_module()
-
-# Quick test when run directly
-if __name__ == "__main__":
-    print("Running data acquisition module test...")
-    
-    # Print status
-    print_module_status()
-    
-    # Run quick test
-    print("\n" + "="*60)
-    test_results = run_quick_test()
-    
-    print(f"\nModule Test Results:")
-    print(f"Available Steps: {len(test_results['module_info']['available_steps'])}")
-    print(f"Overall Status: {test_results['overall_status'].upper()}")
-    
-    # Show test results
-    for step_name, result in test_results['step_tests'].items():
-        status_symbol = {"success": "✓", "failed": "✗", "skipped": "⚠"}[result['status']]
-        print(f"  {status_symbol} {step_name}: {result['status']}")
-        if result['status'] == 'failed':
-            print(f"    Error: {result.get('error', 'Unknown error')}")
-    
-    # Show help if not fully functional
-    if test_results['overall_status'] in ['failed', 'partial', 'no_tests']:
-        print(f"\nFor help:")
-        print("python -c \"from orchestrator.steps.data_acquisition import get_help; print(get_help())\"")
-    
-    print(f"\nData acquisition module test completed!")
