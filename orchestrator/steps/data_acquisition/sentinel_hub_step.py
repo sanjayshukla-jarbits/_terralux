@@ -325,7 +325,7 @@ class SentinelHubAcquisitionStep(BaseStep):
             evalscript=evalscript,
             input_data=[
                 SentinelHubRequest.input_data(
-                    data_collection=DataCollection[params['data_collection'].replace('-', '_')],
+                    data_collection=self._get_data_collection(params['data_collection']),
                     time_interval=(params['start_date'], params['end_date']),
                     maxcc=params['max_cloud_coverage'] / 100.0
                 )
