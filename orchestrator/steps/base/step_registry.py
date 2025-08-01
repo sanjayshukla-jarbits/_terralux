@@ -152,6 +152,11 @@ class StepRegistry:
             if aliases:
                 cls._logger.debug(f"Registered aliases for '{step_type}': {aliases}")
     
+    @classmethod
+    def get_available_types(cls) -> List[str]:
+        """Get list of all available step types (alias for compatibility)."""
+        return cls.get_registered_types()
+
     @classmethod  
     def _validate_registration(cls, 
                              step_type: str, 

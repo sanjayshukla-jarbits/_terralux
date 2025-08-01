@@ -51,6 +51,9 @@ class PipelineContext:
         self.pipeline_id = pipeline_id or f"pipeline_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         self.global_config = global_config or {}
         
+        # Logger setup
+        self.logger = logging.getLogger(f'PipelineContext.{self.pipeline_id}')
+
         # Setup directories
         self._setup_directories(base_output_dir)
         
@@ -67,8 +70,6 @@ class PipelineContext:
         # Thread safety
         self._lock = threading.RLock()
         
-        # Logger setup
-        self.logger = logging.getLogger(f'PipelineContext.{self.pipeline_id}')
         self.logger.info(f"Initialized pipeline context: {self.pipeline_id}")
         
     def _setup_directories(self, base_output_dir: Optional[Union[str, Path]]):
