@@ -1,0 +1,22 @@
+{
+  "source": "SRTM",
+  "resolution": 30,
+  "bbox": [
+    85.3,
+    27.6,
+    85.4,
+    27.7
+  ],
+  "files": [
+    "outputs/nepal_test/dem_data/elevation_acquire_elevation_data.tif",
+    "outputs/nepal_test/dem_data/slope_acquire_elevation_data.tif",
+    "outputs/nepal_test/dem_data/aspect_acquire_elevation_data.tif",
+    "outputs/nepal_test/dem_data/profile_curvature_acquire_elevation_data.tif",
+    "outputs/nepal_test/dem_data/plan_curvature_acquire_elevation_data.tif",
+    "outputs/nepal_test/dem_data/mean_curvature_acquire_elevation_data.tif",
+    "outputs/nepal_test/dem_data/roughness_acquire_elevation_data.tif",
+    "outputs/nepal_test/dem_data/terrain_ruggedness_index_acquire_elevation_data.tif"
+  ],
+  "generation_time": "2025-08-01T10:31:05.078060",
+  "step_id": "acquire_elevation_data"
+}
