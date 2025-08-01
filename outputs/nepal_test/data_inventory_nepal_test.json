@@ -20,17 +20,18 @@
   ],
   "outputs_generated": [
     "local_files_inventory_nepal_test.json",
+    "data_inventory_nepal_test.json",
     "indices_stats_nepal_test.json",
     "validation_report_nepal_test.json",
     "sentinel_nepal_test_metadata.json",
     "dem_nepal_test_metadata.json"
   ],
-  "total_files": 5,
+  "total_files": 6,
   "mock_execution": true,
-  "execution_timestamp": "2025-07-31 13:20:20",
+  "execution_timestamp": "2025-07-31 14:48:49",
   "pipeline_summary": {
     "status": "completed",
-    "steps_executed": 5,
+    "steps_executed": 6,
     "total_processing_time": "~3 minutes (simulated)",
     "data_quality": "acceptable",
     "next_steps": [

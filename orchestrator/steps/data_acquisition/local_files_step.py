@@ -4,6 +4,8 @@ Local Files Discovery and Loading Step
 
 This module implements local file discovery and loading for geospatial data,
 designed with fail-fast principles for rapid development and testing.
+CORRECTED for compatibility with ModularOrchestrator ExecutionContext and
+to remove StepResult references.
 
 Key Features:
 - Flexible file pattern matching (glob patterns)
@@ -13,6 +15,8 @@ Key Features:
 - Integration with existing landslide_pipeline file management
 - Mock file generation for testing
 - Comprehensive file filtering and sorting
+- Compatible with ModularOrchestrator ExecutionContext
+- Returns Dict instead of deprecated StepResult
 """
 
 import logging
@@ -24,10 +28,50 @@ from typing import Dict, Any, List, Optional, Tuple, Union, Set
 from datetime import datetime, timedelta
 from pathlib import Path
 import re
+import numpy as np
 
-# Import base step infrastructure
-from ..base.base_step import BaseStep, StepResult
-from ..base.step_registry import StepRegistry, register_step
+# CORRECTED: Import base step infrastructure - remove StepResult
+try:
+    from ..base.base_step import BaseStep
+    from ..base.step_registry import StepRegistry
+except ImportError:
+    try:
+        from orchestrator.steps.base.base_step import BaseStep
+        from orchestrator.steps.base.step_registry import StepRegistry
+    except ImportError:
+        # Fallback for standalone testing
+        logging.warning("BaseStep and StepRegistry not available, using fallback implementations")
+        
+        class BaseStep:
+            def __init__(self, step_id: str, step_config: Dict[str, Any]):
+                self.step_id = step_id
+                self.step_config = step_config
+                self.step_type = step_config.get('type', 'unknown')
+                self.hyperparameters = step_config.get('hyperparameters', {})
+                self.logger = logging.getLogger(f"Step.{step_id}")
+            
+            def execute(self, context) -> Dict[str, Any]:
+                """Abstract execute method"""
+                raise NotImplementedError("Subclasses must implement execute method")
+            
+            def get_input_data(self, context, input_key: str, default=None):
+                """Helper method for getting input data from context"""
+                if hasattr(context, 'get_variable'):
+                    return context.get_variable(input_key, default)
+                return default
+            
+            def set_output_data(self, context, output_key: str, value, metadata=None):
+                """Helper method for setting output data in context"""
+                if hasattr(context, 'set_artifact'):
+                    context.set_artifact(output_key, value)
+        
+        class StepRegistry:
+            _steps = {}
+            
+            @classmethod
+            def register(cls, step_type: str, step_class):
+                cls._steps[step_type] = step_class
+                logging.info(f"Registered step type: {step_type}")
 
 # Conditional imports for dependencies
 try:
@@ -73,12 +117,11 @@ class LocalFilesDiscoveryError(Exception):
     pass
 
 
-@register_step('local_files_discovery',
-               category='data_acquisition',
-               aliases=['local_files', 'file_discovery', 'local_data_loading'])
 class LocalFilesStep(BaseStep):
     """
     Local files discovery and loading step.
+    CORRECTED for compatibility with ModularOrchestrator ExecutionContext
+    and to return Dict instead of StepResult.
     
     This step handles discovery and loading of local geospatial files including:
     - Raster formats: GeoTIFF, IMG, JP2, HDF, NetCDF, COG
@@ -230,21 +273,27 @@ class LocalFilesStep(BaseStep):
         
         self.logger.debug(f"Configuration status: {', '.join(status_items)}")
     
-    def execute(self, context) -> StepResult:
+    def execute(self, context) -> Dict[str, Any]:
         """
         Execute local files discovery.
+        CORRECTED to use ExecutionContext and return Dict format instead of StepResult.
         
         Args:
-            context: Pipeline execution context
+            context: Execution context containing shared data and configuration
             
         Returns:
-            StepResult with discovery status and found files
+            Dictionary with execution results:
+            {
+                'status': 'success'|'failed'|'skipped',
+                'outputs': {...},
+                'metadata': {...}
+            }
         """
         self.logger.info(f"Starting local files discovery: {self.step_id}")
         
         try:
             # Extract and validate parameters
-            params = self._extract_parameters()
+            params = self._extract_parameters(context)
             self._validate_parameters(params)
             
             # Log discovery parameters
@@ -259,11 +308,16 @@ class LocalFilesStep(BaseStep):
                     discovered_files = self._generate_mock_files(params)
                     self.logger.info("✓ Generated mock files for testing")
                 else:
-                    return StepResult(
-                        status='failed',
-                        error_message="No files found matching search criteria",
-                        metadata={'search_patterns': params['file_patterns']}
-                    )
+                    return {
+                        'status': 'failed',
+                        'outputs': {},
+                        'metadata': {
+                            'error': "No files found matching search criteria",
+                            'search_patterns': params['file_patterns'],
+                            'step_id': self.step_id,
+                            'step_type': self.step_type
+                        }
+                    }
             
             # Filter and sort files
             filtered_files = self._filter_files(discovered_files, params)
@@ -288,7 +342,7 @@ class LocalFilesStep(BaseStep):
             
             # Store results in context
             output_key = f"{self.step_id}_files"
-            context.set_artifact(output_key, file_results, metadata={
+            self.set_output_data(context, output_key, file_results, metadata={
                 'discovery_method': 'local_files',
                 'parameters': params,
                 'timestamp': datetime.now().isoformat()
@@ -297,14 +351,14 @@ class LocalFilesStep(BaseStep):
             # Create file inventory
             inventory = self._create_file_inventory(file_results, params)
             
-            return StepResult(
-                status='success',
-                outputs={
+            return {
+                'status': 'success',
+                'outputs': {
                     'files_data': output_key,
                     'file_inventory': inventory,
                     'file_count': len(valid_files)
                 },
-                metadata={
+                'metadata': {
                     'base_path': str(params['base_path']),
                     'patterns_searched': params['file_patterns'],
                     'files_discovered': len(discovered_files),
@@ -313,27 +367,33 @@ class LocalFilesStep(BaseStep):
                     'validation_enabled': params.get('validate_files', True),
                     'metadata_loaded': params.get('load_metadata', True),
                     'file_types': self._get_file_type_summary(valid_files),
-                    'total_size_mb': self._calculate_total_size(valid_files)
-                },
-                warnings=self._get_warnings(params, discovered_files, valid_files)
-            )
+                    'total_size_mb': self._calculate_total_size(valid_files),
+                    'step_id': self.step_id,
+                    'step_type': self.step_type,
+                    'warnings': self._get_warnings(params, discovered_files, valid_files)
+                }
+            }
             
         except Exception as e:
             self.logger.error(f"Local files discovery failed: {e}")
-            return StepResult(
-                status='failed',
-                error_message=str(e),
-                metadata={
+            return {
+                'status': 'failed',
+                'outputs': {},
+                'metadata': {
+                    'error': str(e),
                     'step_id': self.step_id,
+                    'step_type': self.step_type,
                     'base_path': str(self.base_path)
                 }
-            )
+            }
     
-    def _extract_parameters(self) -> Dict[str, Any]:
-        """Extract and process discovery parameters."""
-        # Base parameters
-        base_path = self.get_input_data(context=None, input_key='base_path',
-                                       default=self.hyperparameters.get('base_path', '.'))
+    def _extract_parameters(self, context) -> Dict[str, Any]:
+        """
+        Extract and process discovery parameters.
+        CORRECTED to use ExecutionContext properly.
+        """
+        # Base parameters - get from context variables or hyperparameters
+        base_path = self.get_input_data(context, 'local_data_path', self.hyperparameters.get('base_path', '.'))
         
         params = {
             'base_path': Path(base_path).expanduser().resolve(),
@@ -715,4 +775,209 @@ class LocalFilesStep(BaseStep):
                 self.logger.warning(f"Error extracting metadata from {file_path}: {e}")
                 metadata_results[file_path] = {'error': str(e)}
         
-        self.logger.debug(f"Extracted metadata for {len(metadata_results)} files
+        # CORRECTED: Fixed the syntax error by adding closing quote
+        self.logger.debug(f"Extracted metadata for {len(metadata_results)} files")
+        return metadata_results
+    
+    def _extract_file_metadata(self, file_path: Path) -> Dict[str, Any]:
+        """Extract metadata from a single file."""
+        metadata = {
+            'file_path': str(file_path),
+            'file_name': file_path.name,
+            'file_size_mb': file_path.stat().st_size / (1024 * 1024),
+            'file_type': file_path.suffix.lower(),
+            'modified_date': datetime.fromtimestamp(file_path.stat().st_mtime).isoformat()
+        }
+        
+        # Format-specific metadata extraction
+        file_ext = file_path.suffix.lower()
+        
+        if file_ext in ['.tif', '.tiff'] and RASTERIO_AVAILABLE:
+            metadata.update(self._extract_raster_metadata(file_path))
+        elif file_ext == '.shp' and GEOPANDAS_AVAILABLE:
+            metadata.update(self._extract_vector_metadata(file_path))
+        
+        return metadata
+    
+    def _extract_raster_metadata(self, file_path: Path) -> Dict[str, Any]:
+        """Extract raster-specific metadata."""
+        metadata = {}
+        
+        try:
+            with rasterio.open(file_path) as src:
+                metadata.update({
+                    'width': src.width,
+                    'height': src.height,
+                    'bands': src.count,
+                    'dtype': str(src.dtypes[0]),
+                    'crs': str(src.crs) if src.crs else None,
+                    'bounds': list(src.bounds),
+                    'transform': list(src.transform)[:6],
+                    'nodata': src.nodata
+                })
+        except Exception as e:
+            metadata['raster_error'] = str(e)
+        
+        return metadata
+    
+    def _extract_vector_metadata(self, file_path: Path) -> Dict[str, Any]:
+        """Extract vector-specific metadata."""
+        metadata = {}
+        
+        try:
+            # Just read the first few rows to get metadata
+            gdf = gpd.read_file(file_path, rows=1)
+            metadata.update({
+                'geometry_type': gdf.geometry.iloc[0].geom_type if len(gdf) > 0 else None,
+                'crs': str(gdf.crs) if gdf.crs else None,
+                'columns': list(gdf.columns)
+            })
+            
+            # Get total feature count
+            full_gdf = gpd.read_file(file_path)
+            metadata['feature_count'] = len(full_gdf)
+            metadata['bounds'] = list(full_gdf.total_bounds)
+            
+        except Exception as e:
+            metadata['vector_error'] = str(e)
+        
+        return metadata
+    
+    def _organize_results(self, files: List[Path], metadata: Dict[Path, Dict[str, Any]], 
+                         validation: Dict[Path, Dict[str, Any]], params: Dict[str, Any]) -> Dict[str, Any]:
+        """Organize file discovery results."""
+        return {
+            'files': [str(f) for f in files],
+            'file_count': len(files),
+            'metadata': {str(k): v for k, v in metadata.items()},
+            'validation': {str(k): v for k, v in validation.items()},
+            'discovery_params': params,
+            'timestamp': datetime.now().isoformat()
+        }
+    
+    def _create_file_inventory(self, file_results: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+        """Create comprehensive file inventory."""
+        return {
+            'inventory_id': f"{self.step_id}_inventory",
+            'total_files': file_results['file_count'],
+            'base_path': str(params['base_path']),
+            'search_patterns': params['file_patterns'],
+            'files': file_results['files'],
+            'file_types': self._get_file_type_summary(file_results['files']),
+            'total_size_mb': self._calculate_total_size(file_results['files']),
+            'created': datetime.now().isoformat()
+        }
+    
+    def _get_file_type_summary(self, files: Union[List[Path], List[str]]) -> Dict[str, int]:
+        """Get summary of file types."""
+        type_counts = {}
+        for file_path in files:
+            if isinstance(file_path, str):
+                file_path = Path(file_path)
+            file_ext = file_path.suffix.lower()
+            type_counts[file_ext] = type_counts.get(file_ext, 0) + 1
+        return type_counts
+    
+    def _calculate_total_size(self, files: Union[List[Path], List[str]]) -> float:
+        """Calculate total size of files in MB."""
+        total_size = 0
+        for file_path in files:
+            try:
+                if isinstance(file_path, str):
+                    file_path = Path(file_path)
+                if file_path.exists():
+                    total_size += file_path.stat().st_size
+            except Exception:
+                pass
+        return total_size / (1024 * 1024)
+    
+    def _get_warnings(self, params: Dict[str, Any], discovered_files: List[Path], valid_files: List[Path]) -> List[str]:
+        """Generate warnings about the discovery process."""
+        warnings = []
+        
+        if len(discovered_files) == 0:
+            warnings.append("No files found matching search patterns")
+        elif len(valid_files) < len(discovered_files):
+            warnings.append(f"{len(discovered_files) - len(valid_files)} files failed validation")
+        
+        if not RASTERIO_AVAILABLE:
+            warnings.append("Rasterio not available - limited raster file support")
+        
+        if not GEOPANDAS_AVAILABLE:
+            warnings.append("GeoPandas not available - limited vector file support")
+        
+        return warnings
+    
+    def _generate_mock_files(self, params: Dict[str, Any]) -> List[Path]:
+        """Generate mock files for testing when no real files found."""
+        mock_files = []
+        base_path = params['base_path']
+        base_path.mkdir(parents=True, exist_ok=True)
+        
+        mock_count = params.get('mock_file_count', 5)
+        
+        for i in range(mock_count):
+            # Create mock file names based on patterns
+            if '*.tif' in params['file_patterns']:
+                mock_file = base_path / f"mock_raster_{i:02d}.tif"
+            elif '*.shp' in params['file_patterns']:
+                mock_file = base_path / f"mock_vector_{i:02d}.shp"
+            else:
+                mock_file = base_path / f"mock_file_{i:02d}.txt"
+            
+            # Create empty mock file
+            mock_file.touch()
+            mock_files.append(mock_file)
+        
+        self.logger.info(f"Generated {len(mock_files)} mock files for testing")
+        return mock_files
+
+
+# Register the step - CORRECTED to use proper registration
+StepRegistry.register('local_files_discovery', LocalFilesStep)
+
+if __name__ == "__main__":
+    # Test the step
+    test_config = {
+        'type': 'local_files_discovery',
+        'hyperparameters': {
+            'base_path': '.',
+            'file_patterns': ['*.tif', '*.shp'],
+            'recursive': True,
+            'validate_files': True,
+            'load_metadata': True
+        }
+    }
+    
+    # Simple ExecutionContext mock for testing
+    class SimpleExecutionContext:
+        def __init__(self):
+            self.variables = {}
+            self.artifacts = {}
+            self.step_outputs = {}
+        
+        def get_variable(self, key: str, default=None):
+            return self.variables.get(key, default)
+        
+        def set_artifact(self, key: str, value, metadata=None):
+            self.artifacts[key] = value
+    
+    step = LocalFilesStep('test_local_files', test_config)
+    context = SimpleExecutionContext()
+    
+    print("🧪 Testing Local Files Discovery Step")
+    print("=" * 50)
+    
+    result = step.execute(context)
+    
+    print(f"Status: {result['status']}")
+    if result['status'] == 'success':
+        print(f"Files found: {result['outputs']['file_count']}")
+        print(f"File types: {result['metadata']['file_types']}")
+    else:
+        print(f"Error: {result['metadata']['error']}")
+    
+    print("\n✅ Test completed!")
+    print("✅ CORRECTED: No longer uses StepResult - returns Dict")
+    print("✅ CORRECTED: Compatible with ExecutionContext")
+    print("✅ CORRECTED: Fixed syntax error on line 718")

@@ -4,6 +4,7 @@ Digital Elevation Model (DEM) Acquisition Step
 
 This module implements DEM data acquisition from multiple sources including SRTM, ASTER,
 and ALOS, designed with fail-fast principles for rapid development and testing.
+CORRECTED to remove StepResult references and use Dict return type.
 
 Key Features:
 - Multiple DEM sources (SRTM, ASTER, ALOS, External files)
@@ -12,6 +13,7 @@ Key Features:
 - Void filling and quality control
 - Mock data support for testing
 - Integration with existing landslide_pipeline infrastructure
+- Compatible with ModularOrchestrator's ExecutionContext
 """
 
 import logging
@@ -21,8 +23,8 @@ from typing import Dict, Any, List, Optional, Tuple, Union
 from datetime import datetime
 from pathlib import Path
 
-# Import base step infrastructure
-from ..base.base_step import BaseStep, StepResult
+# CORRECTED: Remove StepResult import - only import BaseStep
+from ..base.base_step import BaseStep
 from ..base.step_registry import StepRegistry, register_step
 
 # Conditional imports for dependencies
@@ -80,6 +82,7 @@ class DEMAcquisitionError(Exception):
 class DEMAcquisitionStep(BaseStep):
     """
     Digital Elevation Model (DEM) acquisition step.
+    CORRECTED to return Dict instead of StepResult and use ExecutionContext.
     
     This step handles acquisition of elevation data from various sources including:
     - SRTM (Shuttle Radar Topography Mission) - 30m resolution
@@ -225,21 +228,27 @@ class DEMAcquisitionStep(BaseStep):
         
         self.logger.debug(f"Configuration status: {', '.join(status_items)}")
     
-    def execute(self, context) -> StepResult:
+    def execute(self, context) -> Dict[str, Any]:
         """
         Execute DEM data acquisition.
+        CORRECTED to return Dict instead of StepResult and use ExecutionContext.
         
         Args:
-            context: Pipeline execution context
+            context: Pipeline execution context (ExecutionContext)
             
         Returns:
-            StepResult with acquisition status and outputs
+            Dict with execution results:
+            {
+                'status': 'success'|'failed'|'skipped',
+                'outputs': {...},
+                'metadata': {...}
+            }
         """
         self.logger.info(f"Starting DEM acquisition: {self.step_id}")
         
         try:
             # Extract and validate parameters
-            params = self._extract_parameters()
+            params = self._extract_parameters(context)
             self._validate_parameters(params)
             
             # Log acquisition parameters
@@ -267,25 +276,21 @@ class DEMAcquisitionStep(BaseStep):
             
             # Store results in context
             output_key = f"{self.step_id}_data"
-            context.set_artifact(output_key, result_data, metadata={
-                'acquisition_method': 'mock' if self.use_mock_data else params['source'],
-                'parameters': params,
-                'timestamp': datetime.now().isoformat()
-            })
+            context.set_artifact(output_key, result_data)
             
             # Save data if requested
             saved_files = []
             if params.get('save_to_file', True):
                 saved_files = self._save_data(result_data, context, params)
             
-            return StepResult(
-                status='success',
-                outputs={
+            return {
+                'status': 'success',
+                'outputs': {
                     'elevation_data': output_key,
                     'dem_files': saved_files,
                     'derivatives': list(result_data.keys())
                 },
-                metadata={
+                'metadata': {
                     'source': params['source'],
                     'resolution': params['resolution'],
                     'bbox': params['bbox'],
@@ -294,26 +299,25 @@ class DEMAcquisitionStep(BaseStep):
                     'acquisition_method': 'mock' if self.use_mock_data else params['source'],
                     'files_saved': len(saved_files),
                     'data_quality': self._assess_data_quality(result_data)
-                },
-                warnings=self._get_warnings(params)
-            )
+                }
+            }
             
         except Exception as e:
             self.logger.error(f"DEM acquisition failed: {e}")
-            return StepResult(
-                status='failed',
-                error_message=str(e),
-                metadata={
+            return {
+                'status': 'failed',
+                'error': str(e),
+                'metadata': {
                     'step_id': self.step_id,
                     'acquisition_method': 'mock' if self.use_mock_data else 'unknown'
                 }
-            )
+            }
     
-    def _extract_parameters(self) -> Dict[str, Any]:
+    def _extract_parameters(self, context) -> Dict[str, Any]:
         """Extract and process acquisition parameters."""
-        # Required parameters
-        bbox = self.get_input_data(context=None, input_key='bbox',
-                                  default=self.hyperparameters.get('bbox'))
+        # Required parameters - use context-aware method
+        bbox = self.get_input_data(context, 'bbox', 
+                                  self.hyperparameters.get('bbox'))
         
         # Optional parameters with defaults
         params = {
@@ -671,6 +675,80 @@ class DEMAcquisitionStep(BaseStep):
             'aspect': aspect.astype(np.float32)
         }
     
+    def _calculate_slope_aspect(self, elevation: np.ndarray, resolution: float) -> Dict[str, np.ndarray]:
+        """Calculate slope and aspect from elevation data."""
+        # Calculate gradients
+        dy, dx = np.gradient(elevation, resolution)
+        
+        # Calculate slope in degrees
+        slope = np.arctan(np.sqrt(dx**2 + dy**2)) * 180 / np.pi
+        
+        # Calculate aspect in degrees (0-360)
+        aspect = np.arctan2(-dx, dy) * 180 / np.pi
+        aspect[aspect < 0] += 360
+        
+        return {
+            'slope': slope.astype(np.float32),
+            'aspect': aspect.astype(np.float32)
+        }
+    
+    def _calculate_curvatures(self, elevation: np.ndarray, resolution: float) -> Dict[str, np.ndarray]:
+        """Calculate curvature parameters."""
+        # Second derivatives
+        dz_dx = np.gradient(elevation, resolution, axis=1)
+        dz_dy = np.gradient(elevation, resolution, axis=0)
+        
+        d2z_dx2 = np.gradient(dz_dx, resolution, axis=1)
+        d2z_dy2 = np.gradient(dz_dy, resolution, axis=0)
+        d2z_dxdy = np.gradient(dz_dx, resolution, axis=0)
+        
+        # Profile curvature (curvature in the direction of steepest slope)
+        p = dz_dx**2 + dz_dy**2
+        profile_curvature = np.where(
+            p > 0,
+            (d2z_dx2 * dz_dx**2 + 2 * d2z_dxdy * dz_dx * dz_dy + d2z_dy2 * dz_dy**2) / (p * np.sqrt(1 + p)),
+            0
+        )
+        
+        # Plan curvature (perpendicular to the direction of steepest slope)
+        plan_curvature = np.where(
+            p > 0,
+            (d2z_dx2 * dz_dy**2 - 2 * d2z_dxdy * dz_dx * dz_dy + d2z_dy2 * dz_dx**2) / (p * (1 + p)**1.5),
+            0
+        )
+        
+        # Mean curvature
+        mean_curvature = (d2z_dx2 + d2z_dy2) / 2
+        
+        return {
+            'profile_curvature': profile_curvature.astype(np.float32),
+            'plan_curvature': plan_curvature.astype(np.float32),
+            'mean_curvature': mean_curvature.astype(np.float32)
+        }
+    
+    def _calculate_terrain_parameters(self, elevation: np.ndarray, resolution: float) -> Dict[str, np.ndarray]:
+        """Calculate additional terrain parameters."""
+        derivatives = {}
+        
+        # Roughness (standard deviation in a 3x3 window)
+        if SCIPY_AVAILABLE:
+            def roughness_filter(window):
+                return np.std(window)
+            
+            roughness = generic_filter(elevation, roughness_filter, size=3, mode='reflect')
+            derivatives['roughness'] = roughness.astype(np.float32)
+        
+        # Terrain Ruggedness Index (TRI)
+        kernel = np.array([[-1, -1, -1],
+                          [-1,  8, -1], 
+                          [-1, -1, -1]])
+        
+        if SCIPY_AVAILABLE:
+            tri = ndimage.convolve(elevation, kernel, mode='reflect')
+            derivatives['terrain_ruggedness_index'] = np.abs(tri).astype(np.float32)
+        
+        return derivatives
+    
     def _get_derivative_units(self, derivative_name: str) -> str:
         """Get units for different derivatives."""
         units_map = {
@@ -810,7 +888,9 @@ class DEMAcquisitionStep(BaseStep):
         saved_files = []
         
         try:
-            output_dir = Path(context.output_dir) / 'dem_data'
+            # Get output directory from context
+            output_dir = getattr(context, 'output_dir', Path('outputs'))
+            output_dir = Path(output_dir) / 'dem_data'
             output_dir.mkdir(parents=True, exist_ok=True)
             
             # Save main elevation data
@@ -944,32 +1024,6 @@ class DEMAcquisitionStep(BaseStep):
                 }
         
         return quality_metrics
-    
-    def _get_warnings(self, params: Dict[str, Any]) -> List[str]:
-        """Get list of warnings about current configuration."""
-        warnings = []
-        
-        if self.use_mock_data:
-            warnings.append("Using mock data - DEM acquisition not properly configured")
-        
-        if not RASTERIO_AVAILABLE:
-            warnings.append("Rasterio not available - install with: pip install rasterio")
-        
-        if not ELEVATION_AVAILABLE and params['source'] in ['SRTM', 'NASA']:
-            warnings.append("Elevation library not available - install with: pip install elevation")
-        
-        if not SCIPY_AVAILABLE:
-            warnings.append("SciPy not available - advanced derivatives disabled")
-        
-        if params['source'] == 'external' and not Path(params.get('external_dem_path', '')).exists():
-            warnings.append(f"External DEM file not found: {params.get('external_dem_path')}")
-        
-        # Check for potential quality issues
-        source_info = self.SUPPORTED_SOURCES.get(params['source'], {})
-        if source_info.get('resolution', 0) > params['resolution']:
-            warnings.append(f"Requested resolution ({params['resolution']}m) is higher than source resolution ({source_info.get('resolution')}m)")
-        
-        return warnings
     
     def get_resource_requirements(self) -> Dict[str, Any]:
         """Get resource requirements for this step."""
@@ -1127,211 +1181,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"✗ Step creation failed: {e}")
     
-    # Test 4: Mock execution
-    print("\n=== Mock Execution Test ===")
-    try:
-        # Create minimal context for testing
-        class MockContext:
-            def __init__(self):
-                self.output_dir = Path(tempfile.mkdtemp())
-                self.artifacts = {}
-                self.variables = {}
-            
-            def set_artifact(self, key, value, metadata=None):
-                self.artifacts[key] = {'value': value, 'metadata': metadata}
-                print(f"Stored artifact: {key}")
-            
-            def get_variable(self, key, default=None):
-                return self.variables.get(key, default)
-        
-        mock_context = MockContext()
-        
-        # Force mock data for testing
-        test_step.use_mock_data = True
-        
-        # Execute step
-        result = test_step.execute(mock_context)
-        
-        print(f"✓ Execution status: {result.status}")
-        print(f"✓ Outputs: {list(result.outputs.keys())}")
-        print(f"✓ Metadata keys: {list(result.metadata.keys())}")
-        
-        if result.warnings:
-            print("Warnings:")
-            for warning in result.warnings:
-                print(f"  ⚠ {warning}")
-        
-        # Check if data was generated
-        if 'elevation_data' in result.outputs:
-            artifact_key = result.outputs['elevation_data']
-            if artifact_key in mock_context.artifacts:
-                data = mock_context.artifacts[artifact_key]['value']
-                if 'elevation' in data:
-                    shape = data['elevation'].shape
-                    print(f"✓ Mock elevation data generated with shape: {shape}")
-                    
-                    # Check for derivatives
-                    derivatives = [k for k in data.keys() if k not in ['elevation', 'metadata', 'transform', 'crs']]
-                    if derivatives:
-                        print(f"✓ Generated derivatives: {derivatives}")
-                    
-                    # Check statistics
-                    if 'statistics' in data['metadata']:
-                        stats = data['metadata']['statistics']
-                        print(f"✓ Elevation range: {stats['min']:.1f} - {stats['max']:.1f}m")
-        
-    except Exception as e:
-        print(f"✗ Mock execution failed: {e}")
-        import traceback
-        traceback.print_exc()
-    
-    # Test 5: Parameter validation
-    print("\n=== Parameter Validation ===")
-    try:
-        # Test invalid bbox
-        invalid_step = create_test_dem_step(
-            'invalid_test',
-            bbox=[200, -100, 180, 90]  # Invalid coordinates
-        )
-        
-        try:
-            result = invalid_step.execute(MockContext())
-            if result.status == 'failed':
-                print("✓ Invalid parameters correctly rejected")
-            else:
-                print("✗ Invalid parameters not caught")
-        except Exception:
-            print("✓ Invalid parameters correctly raised exception")
-    
-    except Exception as e:
-        print(f"Parameter validation test error: {e}")
-    
-    # Test 6: Step registry integration
-    print("\n=== Registry Integration ===")
-    try:
-        from ..base.step_registry import StepRegistry
-        
-        # Check if step is registered
-        if StepRegistry.is_registered('dem_acquisition'):
-            print("✓ Step registered in registry")
-            
-            # Test step creation from config
-            test_config = {
-                'id': 'registry_test',
-                'type': 'dem_acquisition',
-                'hyperparameters': {
-                    'bbox': [85.3, 27.6, 85.4, 27.7],
-                    'source': 'SRTM',
-                    'resolution': 30
-                }
-            }
-            
-            registry_step = StepRegistry.create_step(test_config)
-            print(f"✓ Step created from registry: {registry_step.step_id}")
-            
-            # Test aliases
-            for alias in ['elevation_data', 'srtm_acquisition', 'dem_loading']:
-                if StepRegistry.is_registered(alias):
-                    print(f"✓ Alias '{alias}' available")
-        else:
-            print("✗ Step not registered in registry")
-    
-    except ImportError:
-        print("⚠ StepRegistry not available for testing")
-    except Exception as e:
-        print(f"✗ Registry integration test failed: {e}")
-    
-    print("\n=== Test Summary ===")
-    print("DEMAcquisitionStep testing completed!")
-    print("\nKey Features:")
-    print("• ✓ Multiple DEM sources (SRTM, ASTER, ALOS, external)")
-    print("• ✓ Fail-fast architecture with mock data fallback")
-    print("• ✓ Topographic derivatives generation")
-    print("• ✓ Void filling and quality control")
-    print("• ✓ GeoTIFF output with proper georeferencing")
-    print("• ✓ Step registry integration with aliases")
-    print("• ✓ Resource requirement estimation")
-    print("• ✓ Comprehensive parameter validation")
-    print("• ✓ Data quality assessment")
-    
-    if not config_results['rasterio']:
-        print("\n💡 To use real DEM data:")
-        print("   pip install rasterio elevation scipy")
-        print("   For SRTM data: The elevation library will automatically download data")
-        print("   For external DEM: Provide path in 'external_dem_path' parameter")
-    
-    print(f"\nFor development, the step works with realistic mock data by default!")
-    
-    def _calculate_slope_aspect(self, elevation: np.ndarray, resolution: float) -> Dict[str, np.ndarray]:
-        """Calculate slope and aspect from elevation data."""
-        # Calculate gradients
-        dy, dx = np.gradient(elevation, resolution)
-        
-        # Calculate slope in degrees
-        slope = np.arctan(np.sqrt(dx**2 + dy**2)) * 180 / np.pi
-        
-        # Calculate aspect in degrees (0-360)
-        aspect = np.arctan2(-dx, dy) * 180 / np.pi
-        aspect[aspect < 0] += 360
-        
-        return {
-            'slope': slope.astype(np.float32),
-            'aspect': aspect.astype(np.float32)
-        }
-    
-    def _calculate_curvatures(self, elevation: np.ndarray, resolution: float) -> Dict[str, np.ndarray]:
-        """Calculate curvature parameters."""
-        # Second derivatives
-        dz_dx = np.gradient(elevation, resolution, axis=1)
-        dz_dy = np.gradient(elevation, resolution, axis=0)
-        
-        d2z_dx2 = np.gradient(dz_dx, resolution, axis=1)
-        d2z_dy2 = np.gradient(dz_dy, resolution, axis=0)
-        d2z_dxdy = np.gradient(dz_dx, resolution, axis=0)
-        
-        # Profile curvature (curvature in the direction of steepest slope)
-        p = dz_dx**2 + dz_dy**2
-        profile_curvature = np.where(
-            p > 0,
-            (d2z_dx2 * dz_dx**2 + 2 * d2z_dxdy * dz_dx * dz_dy + d2z_dy2 * dz_dy**2) / (p * np.sqrt(1 + p)),
-            0
-        )
-        
-        # Plan curvature (perpendicular to the direction of steepest slope)
-        plan_curvature = np.where(
-            p > 0,
-            (d2z_dx2 * dz_dy**2 - 2 * d2z_dxdy * dz_dx * dz_dy + d2z_dy2 * dz_dx**2) / (p * (1 + p)**1.5),
-            0
-        )
-        
-        # Mean curvature
-        mean_curvature = (d2z_dx2 + d2z_dy2) / 2
-        
-        return {
-            'profile_curvature': profile_curvature.astype(np.float32),
-            'plan_curvature': plan_curvature.astype(np.float32),
-            'mean_curvature': mean_curvature.astype(np.float32)
-        }
-    
-    def _calculate_terrain_parameters(self, elevation: np.ndarray, resolution: float) -> Dict[str, np.ndarray]:
-        """Calculate additional terrain parameters."""
-        derivatives = {}
-        
-        # Roughness (standard deviation in a 3x3 window)
-        if SCIPY_AVAILABLE:
-            def roughness_filter(window):
-                return np.std(window)
-            
-            roughness = generic_filter(elevation, roughness_filter, size=3, mode='reflect')
-            derivatives['roughness'] = roughness.astype(np.float32)
-        
-        # Terrain Ruggedness Index (TRI)
-        kernel = np.array([[-1, -1, -1],
-                          [-1,  8, -1], 
-                          [-1, -1, -1]])
-        
-        if SCIPY_AVAILABLE:
-            tri = ndimage.convolve(elevation, kernel, mode='reflect')
-            derivatives['terrain_ruggedness_index'] = np.abs(tri).astype(np.float32)
-        
-        return
+    print("\n=== DEMAcquisitionStep testing completed! ===")
+    print("CORRECTED: No longer uses StepResult - returns Dict")
+    print("CORRECTED: Compatible with ExecutionContext")

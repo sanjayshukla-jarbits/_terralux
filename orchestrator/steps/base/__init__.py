@@ -4,11 +4,11 @@ Steps Base Module - Foundation for Pipeline Step Implementation
 
 This module provides the core infrastructure for implementing pipeline steps
 in the modular orchestrator system, designed with fail-fast principles.
+CORRECTED to remove all StepResult references and use Dict return types.
 
 Core Components:
 - BaseStep: Abstract base class for all pipeline steps
 - StepRegistry: Global registry for step type management
-- StepResult: Standardized result structure
 - Utility functions and decorators
 
 Quick Start:
@@ -19,7 +19,7 @@ from orchestrator.steps.base import BaseStep, StepRegistry, register_step
 # Method 1: Direct registration
 class MyStep(BaseStep):
     def execute(self, context):
-        return StepResult(status='success')
+        return {'status': 'success', 'outputs': {}, 'metadata': {}}
 
 StepRegistry.register('my_step', MyStep)
 
@@ -27,13 +27,13 @@ StepRegistry.register('my_step', MyStep)
 @register_step('my_step_decorated', category='example')
 class MyDecoratedStep(BaseStep):
     def execute(self, context):
-        return StepResult(status='success')
+        return {'status': 'success', 'outputs': {}, 'metadata': {}}
 ```
 
 Development Workflow:
 --------------------
 1. Create step class inheriting from BaseStep
-2. Implement execute() method
+2. Implement execute() method returning Dict
 3. Register with StepRegistry
 4. Test with MockStep if needed
 5. Use in JSON process definitions
@@ -51,17 +51,15 @@ __version__ = "1.0.0-dev"
 # Core imports with fail-fast error handling
 _BASE_STEP_AVAILABLE = False
 _STEP_REGISTRY_AVAILABLE = False
-_STEP_RESULT_AVAILABLE = False
 
 try:
-    from .base_step import BaseStep, StepResult, MockStep, StepValidationError
+    from .base_step import BaseStep, MockStep, StepValidationError
     from .base_step import create_mock_step, validate_step_implementation
     _BASE_STEP_AVAILABLE = True
     logger.debug("BaseStep classes imported successfully")
 except ImportError as e:
     logger.warning(f"Failed to import BaseStep: {e}")
     BaseStep = None
-    StepResult = None
     MockStep = None
     StepValidationError = None
     create_mock_step = None
@@ -301,7 +299,7 @@ def quick_test() -> Dict[str, Any]:
             # Test registration
             class TestStep(BaseStep):
                 def execute(self, context):
-                    return StepResult(status='success') if StepResult else {'status': 'success'}
+                    return {'status': 'success', 'outputs': {}, 'metadata': {}}
             
             success = register_step_safe('test_registry_step', TestStep)
             if success:
@@ -345,7 +343,7 @@ def quick_test() -> Dict[str, Any]:
         try:
             class ValidStep(BaseStep):
                 def execute(self, context):
-                    return StepResult(status='success') if StepResult else {'status': 'success'}
+                    return {'status': 'success', 'outputs': {}, 'metadata': {}}
             
             errors = validate_step_class(ValidStep)
             if not errors:
@@ -422,11 +420,11 @@ Steps Base Module Help
 =====================
 
 This module provides the foundation for implementing pipeline steps.
+CORRECTED to use Dict return types instead of StepResult.
 
 Core Classes:
 - BaseStep: Abstract base class for all steps
 - StepRegistry: Global registry for step types
-- StepResult: Standard result structure
 - MockStep: Mock implementation for testing
 
 Key Functions:
@@ -438,7 +436,7 @@ Key Functions:
 Development Workflow:
 1. Import base classes: from orchestrator.steps.base import BaseStep, StepRegistry
 2. Create step class inheriting from BaseStep
-3. Implement execute() method returning StepResult
+3. Implement execute() method returning Dict with 'status', 'outputs', 'metadata'
 4. Register step: StepRegistry.register('step_type', StepClass)
 5. Test with create_mock_step() or MockStep
 6. Use in JSON process definitions
@@ -477,7 +475,6 @@ __all__ = [
     # Core classes (may be None if not available)
     'BaseStep',
     'StepRegistry', 
-    'StepResult',
     'MockStep',
     
     # Exception classes

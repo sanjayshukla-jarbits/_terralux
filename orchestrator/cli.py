@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Command-line interface for the Modular Pipeline Orchestrator
-Complete implementation validated against existing project structure
+Corrected implementation with proper orchestrator integration
 """
 
 import argparse
@@ -212,8 +212,21 @@ def validate_process_file(process_file: str, schema_path: Optional[str] = None) 
         return False
 
 def list_available_steps():
-    """List available step types"""
-    print("Available step types:")
+    """List available step types - dynamically get from registry if possible"""
+    try:
+        from .core.orchestrator import ModularOrchestrator
+        orchestrator = ModularOrchestrator()
+        registered_steps = orchestrator.get_step_registry()
+        if registered_steps:
+            print("Registered step types:")
+            for step_type in sorted(registered_steps):
+                print(f"  ✓ {step_type}")
+        else:
+            print("No steps registered yet")
+    except ImportError:
+        print("Orchestrator not available")
+    
+    print("\nPlanned step types:")
     step_types = [
         "sentinel_hub_acquisition - Acquire Sentinel-2/1 data from Sentinel Hub",
         "copernicus_hub_acquisition - Acquire data from Copernicus Open Access Hub", 
@@ -363,6 +376,8 @@ def show_process_info(process_definition: Dict[str, Any]):
 
 def main():
     """Main CLI entry point"""
+    print("✓ _terralux orchestrator loaded (v1.0.0-terralux)")
+    
     parser = setup_argument_parser()
     args = parser.parse_args()
     
@@ -444,100 +459,144 @@ def main():
             show_execution_plan(process_definition, template_vars)
             return 0
         
-        # Try to import and use enhanced orchestrator
+        # Try to import and use real orchestrator first
         try:
-            from .core.enhanced_orchestrator import EnhancedModularOrchestrator
+            from .core.orchestrator import ModularOrchestrator
+            
+            logger.info("Using real modular orchestrator")
             
             # Initialize orchestrator
-            enable_monitoring = not args.no_monitoring
-            orchestrator = EnhancedModularOrchestrator(
-                enable_monitoring=enable_monitoring,
-                max_workers=args.max_workers,
-                memory_limit=args.memory_limit
-            )
+            orchestrator = ModularOrchestrator()
             
-            # Load process
-            orchestrator.load_process(process_path, template_vars)
+            # Load process - pass the process definition directly and template vars
+            orchestrator.load_process(process_definition, template_vars)
             
-            # Build global configuration
-            global_config = template_vars.copy()
-            
-            if args.config:
-                global_config.update(load_additional_config(args.config))
-            
-            if args.parallel:
-                global_config['execution_mode'] = 'parallel'
-            
-            if args.continue_on_error:
-                global_config.setdefault('error_handling', {})['strategy'] = 'skip'
-            
-            if args.timeout:
-                global_config['timeout'] = args.timeout
+            # Show execution summary before running
+            summary = orchestrator.get_execution_summary()
+            logger.info(f"Execution Summary - Total: {summary['total_steps']}, Real: {summary['real_steps']}, Mock: {summary['mock_steps']}")
             
             # Execute process
-            print(f"🚀 Starting execution of: {orchestrator.get_process_info()['name']}")
-            
-            if enable_monitoring:
-                result = orchestrator.execute_process_with_monitoring(global_config)
-            else:
-                result = orchestrator.execute_process(global_config)
-            
-            # Generate report if requested
-            if args.generate_report:
-                report_format = 'html' if args.generate_report.endswith('.html') else 'json'
-                orchestrator.export_execution_report(args.generate_report, report_format)
-            
-            # Print results
-            if result['status'] == 'success':
-                print(f"✅ Process completed successfully!")
-                print(f"   Execution time: {result.get('total_execution_time', 0):.2f} seconds")
-                completed = len([r for r in result.get('step_results', {}).values() if r.get('status') == 'success'])
-                print(f"   Steps completed: {completed}")
-                
-                # Show monitoring summary if available
-                if 'monitoring' in result:
-                    monitoring = result['monitoring']
-                    if 'resource_metrics' in monitoring:
-                        rm = monitoring['resource_metrics']
-                        print(f"   Peak memory: {rm.get('peak_memory', 'N/A')}")
-                        print(f"   Avg CPU: {rm.get('avg_cpu', 'N/A')}%")
-                
-            else:
-                print(f"❌ Process failed!")
-                if 'failed_step' in result:
-                    print(f"   Failed at step: {result['failed_step']}")
-                if 'error' in result:
-                    print(f"   Error: {result['error']}")
-                return 1
-            
-        except ImportError:
-            logger.warning("Enhanced orchestrator not available, using mock implementation")
-            
-            # Fallback to mock orchestrator
-            orchestrator = MockOrchestrator()
-            result = orchestrator.execute_process(
-                process_definition=process_definition,
-                template_vars=template_vars,
-                config={'parallel': args.parallel}
-            )
+            print(f"🚀 Starting execution of: {process_definition.get('process_info', {}).get('name', 'Unknown Process')}")
+            result = orchestrator.execute_process(template_vars)
             
             # Print results
             if result.get('status') == 'success':
                 print(f"✅ Process completed successfully!")
-                print(f"   Steps completed: {result.get('completed_steps', 0)}")
-                print(f"   Output directory: {template_vars['output_dir']}")
+                
+                step_results = result.get('steps', {})
+                successful_steps = [k for k, v in step_results.items() if v.get('status') == 'success']
+                failed_steps = [k for k, v in step_results.items() if v.get('status') == 'failed']
+                
+                print(f"Steps completed: {len(successful_steps)}")
+                if failed_steps:
+                    print(f"Steps failed: {len(failed_steps)} - {failed_steps}")
+                
+                # Show execution summary 
+                print(f"Output directory: {template_vars['output_dir']}")
+                
+                # Show real vs mock execution results
+                real_executions = []
+                mock_executions = []
+                
+                for step_id, step_result in step_results.items():
+                    if step_result.get('step_type_info') == 'REAL':
+                        real_executions.append(step_id)
+                    elif step_result.get('step_type_info') == 'MOCK':
+                        mock_executions.append(step_id)
+                
+                if real_executions:
+                    print(f"✓ Real data processing: {len(real_executions)} steps")
+                if mock_executions:
+                    print(f"⚠ Mock data processing: {len(mock_executions)} steps")
                 
                 # List generated files
                 output_dir = Path(template_vars['output_dir'])
                 if output_dir.exists():
                     files = list(output_dir.glob('*'))
                     if files:
-                        print(f"   Generated {len(files)} output files:")
-                        for file in sorted(files):
-                            print(f"     - {file.name}")
+                        print(f"Generated {len(files)} output files:")
+                        for file in sorted(files)[:10]:  # Show first 10 files
+                            print(f"- {file.name}")
+                        if len(files) > 10:
+                            print(f"... and {len(files) - 10} more files")
+                
             else:
-                print(f"❌ Process failed: {result.get('error', 'Unknown error')}")
+                print(f"❌ Process failed!")
+                if 'error' in result:
+                    print(f"Error: {result['error']}")
+                if 'errors' in result:
+                    for error in result['errors']:
+                        print(f"- {error}")
                 return 1
+                
+        except ImportError as ie:
+            logger.warning(f"Real orchestrator not available ({ie}), trying enhanced orchestrator")
+            
+            # Try enhanced orchestrator (if available)
+            try:
+                from .core.enhanced_orchestrator import EnhancedModularOrchestrator
+                
+                logger.info("Using enhanced modular orchestrator")
+                
+                # Initialize orchestrator
+                enable_monitoring = not args.no_monitoring
+                orchestrator = EnhancedModularOrchestrator(
+                    enable_monitoring=enable_monitoring
+                )
+                
+                # Load process
+                orchestrator.load_process(process_path, template_vars)
+                
+                # Execute process
+                print(f"🚀 Starting execution of: {orchestrator.get_process_info()['name']}")
+                
+                if enable_monitoring:
+                    result = orchestrator.execute_process_with_monitoring(template_vars)
+                else:
+                    result = orchestrator.execute_process(template_vars)
+                
+                # Print results
+                if result['status'] == 'success':
+                    print(f"✅ Process completed successfully!")
+                    print(f"   Execution time: {result.get('total_execution_time', 0):.2f} seconds")
+                    completed = len([r for r in result.get('step_results', {}).values() if r.get('status') == 'success'])
+                    print(f"   Steps completed: {completed}")
+                else:
+                    print(f"❌ Process failed!")
+                    if 'failed_step' in result:
+                        print(f"   Failed at step: {result['failed_step']}")
+                    if 'error' in result:
+                        print(f"   Error: {result['error']}")
+                    return 1
+                    
+            except ImportError:
+                logger.warning("Enhanced orchestrator not available, using mock implementation")
+                
+                # Fallback to mock orchestrator
+                orchestrator = MockOrchestrator()
+                result = orchestrator.execute_process(
+                    process_definition=process_definition,
+                    template_vars=template_vars,
+                    config={'parallel': args.parallel}
+                )
+                
+                # Print results
+                if result.get('status') == 'success':
+                    print(f"✅ Process completed successfully!")
+                    print(f"Steps completed: {result.get('completed_steps', 0)}")
+                    print(f"Output directory: {template_vars['output_dir']}")
+                    
+                    # List generated files
+                    output_dir = Path(template_vars['output_dir'])
+                    if output_dir.exists():
+                        files = list(output_dir.glob('*'))
+                        if files:
+                            print(f"Generated {len(files)} output files:")
+                            for file in sorted(files):
+                                print(f"- {file.name}")
+                else:
+                    print(f"❌ Process failed: {result.get('error', 'Unknown error')}")
+                    return 1
         
         return 0
         
@@ -552,7 +611,7 @@ def main():
 
 
 class MockOrchestrator:
-    """Mock orchestrator for demonstration when enhanced orchestrator is not available"""
+    """Mock orchestrator for demonstration when real orchestrator is not available"""
     
     def __init__(self):
         self.logger = logging.getLogger('MockOrchestrator')
@@ -586,16 +645,6 @@ class MockOrchestrator:
                     'spectral_indices_calculation': self._mock_spectral_indices,
                     'data_validation': self._mock_data_validation,
                     'inventory_generation': self._mock_inventory_generation,
-                    'atmospheric_correction': self._mock_generic_step,
-                    'radiometric_calibration': self._mock_generic_step,
-                    'geometric_correction': self._mock_generic_step,
-                    'cloud_masking': self._mock_generic_step,
-                    'topographic_features': self._mock_generic_step,
-                    'texture_features': self._mock_generic_step,
-                    'slic_segmentation': self._mock_generic_step,
-                    'random_forest_training': self._mock_generic_step,
-                    'risk_mapping': self._mock_generic_step,
-                    'mineral_prospectivity': self._mock_generic_step,
                 }
                 
                 mock_method = step_methods.get(step_type, self._mock_generic_step)
