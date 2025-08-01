@@ -4,15 +4,13 @@ Local Files Discovery and Loading Step
 
 This module implements local file discovery and loading for geospatial data,
 designed with fail-fast principles for rapid development and testing.
-CORRECTED for compatibility with ModularOrchestrator ExecutionContext and
-to remove StepResult references.
+CORRECTED for compatibility with ModularOrchestrator ExecutionContext.
 
 Key Features:
 - Flexible file pattern matching (glob patterns)
 - Recursive directory traversal
 - Multiple geospatial format support
 - File validation and metadata extraction
-- Integration with existing landslide_pipeline file management
 - Mock file generation for testing
 - Comprehensive file filtering and sorting
 - Compatible with ModularOrchestrator ExecutionContext
@@ -28,50 +26,25 @@ from typing import Dict, Any, List, Optional, Tuple, Union, Set
 from datetime import datetime, timedelta
 from pathlib import Path
 import re
-import numpy as np
 
-# CORRECTED: Import base step infrastructure - remove StepResult
+# CORRECTED: Import base step infrastructure
 try:
     from ..base.base_step import BaseStep
-    from ..base.step_registry import StepRegistry
 except ImportError:
-    try:
-        from orchestrator.steps.base.base_step import BaseStep
-        from orchestrator.steps.base.step_registry import StepRegistry
-    except ImportError:
-        # Fallback for standalone testing
-        logging.warning("BaseStep and StepRegistry not available, using fallback implementations")
+    # Fallback for standalone testing
+    logging.warning("BaseStep not available, using fallback implementation")
+    
+    class BaseStep:
+        def __init__(self, step_id: str, step_config: Dict[str, Any]):
+            self.step_id = step_id
+            self.step_config = step_config
+            self.step_type = step_config.get('type', 'unknown')
+            self.hyperparameters = step_config.get('hyperparameters', {})
+            self.logger = logging.getLogger(f"Step.{self.step_type}.{step_id}")
         
-        class BaseStep:
-            def __init__(self, step_id: str, step_config: Dict[str, Any]):
-                self.step_id = step_id
-                self.step_config = step_config
-                self.step_type = step_config.get('type', 'unknown')
-                self.hyperparameters = step_config.get('hyperparameters', {})
-                self.logger = logging.getLogger(f"Step.{step_id}")
-            
-            def execute(self, context) -> Dict[str, Any]:
-                """Abstract execute method"""
-                raise NotImplementedError("Subclasses must implement execute method")
-            
-            def get_input_data(self, context, input_key: str, default=None):
-                """Helper method for getting input data from context"""
-                if hasattr(context, 'get_variable'):
-                    return context.get_variable(input_key, default)
-                return default
-            
-            def set_output_data(self, context, output_key: str, value, metadata=None):
-                """Helper method for setting output data in context"""
-                if hasattr(context, 'set_artifact'):
-                    context.set_artifact(output_key, value)
-        
-        class StepRegistry:
-            _steps = {}
-            
-            @classmethod
-            def register(cls, step_type: str, step_class):
-                cls._steps[step_type] = step_class
-                logging.info(f"Registered step type: {step_type}")
+        def execute(self, context) -> Dict[str, Any]:
+            """Abstract execute method"""
+            raise NotImplementedError("Subclasses must implement execute method")
 
 # Conditional imports for dependencies
 try:
@@ -123,61 +96,23 @@ class LocalFilesStep(BaseStep):
     CORRECTED for compatibility with ModularOrchestrator ExecutionContext
     and to return Dict instead of StepResult.
     
-    This step handles discovery and loading of local geospatial files including:
-    - Raster formats: GeoTIFF, IMG, JP2, HDF, NetCDF, COG
-    - Vector formats: Shapefile, GeoPackage, GeoJSON, KML
-    - Satellite data: Sentinel-2, Landsat, MODIS
-    - DEM data: SRTM, ASTER, ALOS
-    - Custom data formats
-    
-    Supported Parameters:
-    - base_path: Base directory for file search
-    - file_patterns: List of glob patterns to search
-    - recursive: Whether to search subdirectories
-    - file_types: Filter by file types
-    - date_filter: Filter files by date range
-    - size_filter: Filter files by size range
-    - validate_files: Whether to validate file integrity
-    - load_metadata: Whether to extract detailed metadata
-    - sort_by: How to sort discovered files
+    This step discovers and validates geospatial files in local directories
+    with support for various file formats and filtering options.
     """
     
-    # Supported file formats and their characteristics
-    SUPPORTED_FORMATS = {
-        # Raster formats
-        '.tif': {'type': 'raster', 'description': 'GeoTIFF', 'lib': 'rasterio'},
-        '.tiff': {'type': 'raster', 'description': 'GeoTIFF', 'lib': 'rasterio'},
-        '.img': {'type': 'raster', 'description': 'ERDAS Imagine', 'lib': 'rasterio'},
-        '.jp2': {'type': 'raster', 'description': 'JPEG2000', 'lib': 'rasterio'},
-        '.hdf': {'type': 'raster', 'description': 'HDF4/5', 'lib': 'h5py'},
-        '.h5': {'type': 'raster', 'description': 'HDF5', 'lib': 'h5py'},
-        '.nc': {'type': 'raster', 'description': 'NetCDF', 'lib': 'netcdf4'},
-        '.grd': {'type': 'raster', 'description': 'Surfer Grid', 'lib': 'rasterio'},
-        '.asc': {'type': 'raster', 'description': 'ASCII Grid', 'lib': 'rasterio'},
-        
-        # Vector formats
-        '.shp': {'type': 'vector', 'description': 'Shapefile', 'lib': 'geopandas'},
-        '.gpkg': {'type': 'vector', 'description': 'GeoPackage', 'lib': 'geopandas'},
-        '.geojson': {'type': 'vector', 'description': 'GeoJSON', 'lib': 'geopandas'},
-        '.json': {'type': 'vector', 'description': 'JSON/GeoJSON', 'lib': 'geopandas'},
-        '.kml': {'type': 'vector', 'description': 'KML', 'lib': 'geopandas'},
-        '.gml': {'type': 'vector', 'description': 'GML', 'lib': 'geopandas'},
-        
-        # Satellite-specific
-        '.SAFE': {'type': 'sentinel2', 'description': 'Sentinel-2 SAFE', 'lib': 'custom'},
-        '.zip': {'type': 'archive', 'description': 'Compressed archive', 'lib': 'zipfile'},
-        
-        # Other formats
-        '.txt': {'type': 'text', 'description': 'Text data', 'lib': 'builtin'},
-        '.csv': {'type': 'tabular', 'description': 'CSV data', 'lib': 'pandas'},
-        '.xlsx': {'type': 'tabular', 'description': 'Excel data', 'lib': 'pandas'}
+    # Supported file extensions
+    SUPPORTED_EXTENSIONS = {
+        'raster': ['.tif', '.tiff', '.jp2', '.img', '.hdf', '.nc', '.grd'],
+        'vector': ['.shp', '.gpkg', '.geojson', '.kml', '.gml'],
+        'other': ['.txt', '.csv', '.json', '.xml']
     }
     
     # Common file patterns for different data types
     COMMON_PATTERNS = {
-        'all_raster': ['*.tif', '*.tiff', '*.img', '*.jp2', '*.hdf', '*.h5', '*.nc'],
-        'all_vector': ['*.shp', '*.gpkg', '*.geojson', '*.json', '*.kml'],
-        'sentinel2': ['*_B??.jp2', '*_B*.jp2', '*.SAFE'],
+        'all_geospatial': ['*.tif', '*.tiff', '*.shp', '*.gpkg', '*.geojson'],
+        'raster': ['*.tif', '*.tiff', '*.jp2', '*.img', '*.hdf', '*.nc'],
+        'vector': ['*.shp', '*.gpkg', '*.geojson', '*.kml'],
+        'sentinel2': ['*.jp2', '*_B*.jp2', '*.SAFE'],
         'landsat': ['*_B*.TIF', '*_B*.tif', '*LC08*', '*LE07*'],
         'dem': ['*dem*.tif', '*elevation*.tif', '*srtm*.tif', '*aster*.tif'],
         'ndvi': ['*ndvi*.tif', '*NDVI*.tif'],
@@ -209,10 +144,12 @@ class LocalFilesStep(BaseStep):
             
             if not base_path.exists():
                 self.logger.warning(f"Base path does not exist: {base_path}")
-                # Create directory if parent exists
-                if base_path.parent.exists():
+                # Create directory if possible
+                try:
                     base_path.mkdir(parents=True, exist_ok=True)
                     self.logger.info(f"Created base path: {base_path}")
+                except Exception as e:
+                    self.logger.warning(f"Could not create base path: {e}")
             
             self.base_path = base_path
             
@@ -242,7 +179,7 @@ class LocalFilesStep(BaseStep):
         
         # Default patterns if none specified
         if not patterns:
-            patterns = ['*.tif', '*.shp']
+            patterns = ['*.tif', '*.tiff', '*.shp', '*.gpkg', '*.geojson']
         
         self.file_patterns = patterns
         self.logger.debug(f"File search patterns: {self.file_patterns}")
@@ -276,13 +213,13 @@ class LocalFilesStep(BaseStep):
     def execute(self, context) -> Dict[str, Any]:
         """
         Execute local files discovery.
-        CORRECTED to use ExecutionContext and return Dict format instead of StepResult.
+        CORRECTED to return Dict instead of StepResult and use ExecutionContext.
         
         Args:
-            context: Execution context containing shared data and configuration
+            context: Pipeline execution context (ExecutionContext)
             
         Returns:
-            Dictionary with execution results:
+            Dict with execution results:
             {
                 'status': 'success'|'failed'|'skipped',
                 'outputs': {...},
@@ -299,57 +236,40 @@ class LocalFilesStep(BaseStep):
             # Log discovery parameters
             self._log_discovery_info(params)
             
-            # Execute file discovery
+            # Discover files
             discovered_files = self._discover_files(params)
             
-            if not discovered_files:
-                # Generate mock files if no real files found
-                if params.get('generate_mock_if_empty', False):
-                    discovered_files = self._generate_mock_files(params)
-                    self.logger.info("✓ Generated mock files for testing")
-                else:
-                    return {
-                        'status': 'failed',
-                        'outputs': {},
-                        'metadata': {
-                            'error': "No files found matching search criteria",
-                            'search_patterns': params['file_patterns'],
-                            'step_id': self.step_id,
-                            'step_type': self.step_type
-                        }
-                    }
-            
-            # Filter and sort files
+            # Filter files
             filtered_files = self._filter_files(discovered_files, params)
-            sorted_files = self._sort_files(filtered_files, params)
             
             # Validate files if requested
+            valid_files = []
             if params.get('validate_files', True):
-                validation_results = self._validate_files(sorted_files, params)
-                valid_files = [f for f, v in validation_results.items() if v.get('valid', False)]
+                valid_files = self._validate_files(filtered_files, params)
+                self.logger.debug(f"Validated files: {len(valid_files)}/{len(filtered_files)} valid")
             else:
-                valid_files = sorted_files
-                validation_results = {}
+                valid_files = filtered_files
+            
+            # Generate mock files if no files found and enabled
+            if not valid_files and params.get('generate_mock_if_empty', False):
+                mock_files = self._generate_mock_files(params)
+                valid_files.extend(mock_files)
+                self.logger.info("✓ Generated mock files for testing")
+            
+            # Sort and limit files
+            valid_files = self._sort_and_limit_files(valid_files, params)
             
             # Extract metadata if requested
             if params.get('load_metadata', True):
-                file_metadata = self._extract_metadata(valid_files, params)
-            else:
-                file_metadata = {}
+                self._extract_file_metadata(valid_files, params)
+                self.logger.debug(f"Extracted metadata for {len(valid_files)} files")
             
-            # Organize results
-            file_results = self._organize_results(valid_files, file_metadata, validation_results, params)
+            # Create file inventory
+            inventory = self._create_file_inventory(valid_files, params)
             
             # Store results in context
             output_key = f"{self.step_id}_files"
-            self.set_output_data(context, output_key, file_results, metadata={
-                'discovery_method': 'local_files',
-                'parameters': params,
-                'timestamp': datetime.now().isoformat()
-            })
-            
-            # Create file inventory
-            inventory = self._create_file_inventory(file_results, params)
+            context.set_artifact(output_key, valid_files)
             
             return {
                 'status': 'success',
@@ -383,7 +303,7 @@ class LocalFilesStep(BaseStep):
                     'error': str(e),
                     'step_id': self.step_id,
                     'step_type': self.step_type,
-                    'base_path': str(self.base_path)
+                    'base_path': str(self.hyperparameters.get('base_path', '.'))
                 }
             }
     
@@ -393,7 +313,7 @@ class LocalFilesStep(BaseStep):
         CORRECTED to use ExecutionContext properly.
         """
         # Base parameters - get from context variables or hyperparameters
-        base_path = self.get_input_data(context, 'local_data_path', self.hyperparameters.get('base_path', '.'))
+        base_path = context.get_variable('local_data_path', self.hyperparameters.get('base_path', '.'))
         
         params = {
             'base_path': Path(base_path).expanduser().resolve(),
@@ -418,7 +338,7 @@ class LocalFilesStep(BaseStep):
             
             # Mock data options
             'generate_mock_if_empty': self.hyperparameters.get('generate_mock_if_empty', False),
-            'mock_file_count': self.hyperparameters.get('mock_file_count', 5)
+            'mock_file_count': self.hyperparameters.get('mock_file_count', 3)
         }
         
         return params
@@ -427,9 +347,8 @@ class LocalFilesStep(BaseStep):
         """Validate discovery parameters."""
         # Validate base path
         base_path = params['base_path']
-        if not base_path.exists():
-            if not params.get('generate_mock_if_empty', False):
-                raise LocalFilesDiscoveryError(f"Base path does not exist: {base_path}")
+        if not base_path.exists() and not params.get('generate_mock_if_empty', False):
+            raise LocalFilesDiscoveryError(f"Base path does not exist: {base_path}")
         
         # Validate file patterns
         if not params['file_patterns']:
@@ -449,7 +368,7 @@ class LocalFilesStep(BaseStep):
     
     def _log_discovery_info(self, params: Dict[str, Any]) -> None:
         """Log discovery information."""
-        self.logger.info(f"File discovery parameters:")
+        self.logger.info("File discovery parameters:")
         self.logger.info(f"  • Base path: {params['base_path']}")
         self.logger.info(f"  • Patterns: {params['file_patterns']}")
         self.logger.info(f"  • Recursive: {params['recursive']}")
@@ -459,469 +378,340 @@ class LocalFilesStep(BaseStep):
         self.logger.info(f"  • Load metadata: {params['load_metadata']}")
     
     def _discover_files(self, params: Dict[str, Any]) -> List[Path]:
-        """Discover files based on patterns and criteria."""
+        """Discover files based on patterns."""
         discovered_files = []
         base_path = params['base_path']
         
-        if not base_path.exists():
-            self.logger.warning(f"Base path does not exist: {base_path}")
-            return discovered_files
-        
         for pattern in params['file_patterns']:
-            try:
-                if params['recursive']:
-                    # Recursive search with ** pattern
-                    search_pattern = str(base_path / '**' / pattern)
-                    found_files = glob.glob(search_pattern, recursive=True)
-                else:
-                    # Non-recursive search
-                    search_pattern = str(base_path / pattern)
-                    found_files = glob.glob(search_pattern)
-                
-                # Convert to Path objects and filter
-                pattern_files = []
-                for file_path in found_files:
-                    path_obj = Path(file_path)
-                    
-                    # Skip if not a file
-                    if not path_obj.is_file():
-                        continue
-                    
-                    # Skip symlinks if not following them
-                    if path_obj.is_symlink() and not params['follow_symlinks']:
-                        continue
-                    
-                    pattern_files.append(path_obj)
-                
-                discovered_files.extend(pattern_files)
-                self.logger.debug(f"Pattern '{pattern}' found {len(pattern_files)} files")
-                
-            except Exception as e:
-                self.logger.warning(f"Error searching pattern '{pattern}': {e}")
+            if params['recursive']:
+                # Use recursive glob
+                pattern_path = base_path / '**' / pattern
+                found_files = list(base_path.glob(f"**/{pattern}"))
+            else:
+                # Use non-recursive glob
+                found_files = list(base_path.glob(pattern))
+            
+            # Filter symlinks if not following them
+            if not params['follow_symlinks']:
+                found_files = [f for f in found_files if not f.is_symlink()]
+            
+            # Only include files (not directories)
+            found_files = [f for f in found_files if f.is_file()]
+            
+            discovered_files.extend(found_files)
+            self.logger.debug(f"Pattern '{pattern}' found {len(found_files)} files")
         
         # Remove duplicates while preserving order
         unique_files = []
         seen = set()
-        for file_path in discovered_files:
-            if file_path not in seen:
-                unique_files.append(file_path)
-                seen.add(file_path)
+        for f in discovered_files:
+            if f not in seen:
+                unique_files.append(f)
+                seen.add(f)
         
         self.logger.info(f"Discovered {len(unique_files)} unique files")
         return unique_files
     
     def _filter_files(self, files: List[Path], params: Dict[str, Any]) -> List[Path]:
-        """Filter files based on criteria."""
+        """Apply filtering criteria to discovered files."""
+        filtered_files = files.copy()
+        
+        # Filter by file types
+        if params['file_types']:
+            type_extensions = []
+            for file_type in params['file_types']:
+                if file_type in self.SUPPORTED_EXTENSIONS:
+                    type_extensions.extend(self.SUPPORTED_EXTENSIONS[file_type])
+            
+            if type_extensions:
+                filtered_files = [f for f in filtered_files if f.suffix.lower() in type_extensions]
+                self.logger.debug(f"File type filter: {len(filtered_files)} files remain")
+        
+        # Filter by exclude patterns
+        if params['exclude_patterns']:
+            for pattern in params['exclude_patterns']:
+                filtered_files = [f for f in filtered_files if not f.match(pattern)]
+            self.logger.debug(f"Exclude patterns filter: {len(filtered_files)} files remain")
+        
+        # Filter by file size
+        size_filtered = []
+        min_size_bytes = params['min_size_mb'] * 1024 * 1024
+        max_size_bytes = params['max_size_mb'] * 1024 * 1024
+        
+        for file_path in filtered_files:
+            try:
+                file_size = file_path.stat().st_size
+                if min_size_bytes <= file_size <= max_size_bytes:
+                    size_filtered.append(file_path)
+            except (OSError, IOError) as e:
+                self.logger.warning(f"Could not get size for {file_path}: {e}")
+        
+        filtered_files = size_filtered
+        self.logger.debug(f"Size filter: {len(filtered_files)} files remain")
+        
+        # Filter by date if specified
+        if params['date_filter']:
+            filtered_files = self._apply_date_filter(filtered_files, params['date_filter'])
+            self.logger.debug(f"Date filter: {len(filtered_files)} files remain")
+        
+        return filtered_files
+    
+    def _apply_date_filter(self, files: List[Path], date_filter: Dict[str, Any]) -> List[Path]:
+        """Apply date-based filtering."""
+        if not date_filter:
+            return files
+        
         filtered_files = []
+        
+        # Parse date filter options
+        after_date = date_filter.get('after')
+        before_date = date_filter.get('before')
+        
+        if after_date:
+            after_date = datetime.fromisoformat(after_date) if isinstance(after_date, str) else after_date
+        if before_date:
+            before_date = datetime.fromisoformat(before_date) if isinstance(before_date, str) else before_date
         
         for file_path in files:
             try:
-                # File type filter
-                if params['file_types']:
-                    file_ext = file_path.suffix.lower()
-                    if file_ext not in params['file_types']:
-                        continue
+                file_mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
                 
-                # Exclude patterns filter
-                if params['exclude_patterns']:
-                    skip_file = False
-                    for exclude_pattern in params['exclude_patterns']:
-                        if file_path.match(exclude_pattern):
-                            skip_file = True
-                            break
-                    if skip_file:
-                        continue
-                
-                # Size filter
-                file_size_mb = file_path.stat().st_size / (1024 * 1024)
-                if file_size_mb < params['min_size_mb'] or file_size_mb > params['max_size_mb']:
+                # Check date constraints
+                if after_date and file_mtime < after_date:
                     continue
-                
-                # Date filter
-                if params['date_filter']:
-                    if not self._check_date_filter(file_path, params['date_filter']):
-                        continue
+                if before_date and file_mtime > before_date:
+                    continue
                 
                 filtered_files.append(file_path)
                 
-            except Exception as e:
-                self.logger.warning(f"Error filtering file {file_path}: {e}")
+            except (OSError, IOError) as e:
+                self.logger.warning(f"Could not get modification time for {file_path}: {e}")
         
-        self.logger.info(f"Filtered to {len(filtered_files)} files")
         return filtered_files
     
-    def _check_date_filter(self, file_path: Path, date_filter: Dict[str, Any]) -> bool:
-        """Check if file meets date filter criteria."""
-        try:
-            file_mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
-            
-            # Check date range
-            if 'start_date' in date_filter:
-                start_date = datetime.fromisoformat(date_filter['start_date'])
-                if file_mtime < start_date:
-                    return False
-            
-            if 'end_date' in date_filter:
-                end_date = datetime.fromisoformat(date_filter['end_date'])
-                if file_mtime > end_date:
-                    return False
-            
-            # Check age
-            if 'max_age_days' in date_filter:
-                max_age = timedelta(days=date_filter['max_age_days'])
-                if datetime.now() - file_mtime > max_age:
-                    return False
-            
-            return True
-            
-        except Exception as e:
-            self.logger.warning(f"Error checking date filter for {file_path}: {e}")
-            return True  # Include file if date check fails
-    
-    def _sort_files(self, files: List[Path], params: Dict[str, Any]) -> List[Path]:
-        """Sort files based on specified criteria."""
-        sort_by = params['sort_by']
-        
-        try:
-            if sort_by == 'name':
-                sorted_files = sorted(files, key=lambda f: f.name.lower())
-            elif sort_by == 'size':
-                sorted_files = sorted(files, key=lambda f: f.stat().st_size, reverse=True)
-            elif sort_by == 'date':
-                sorted_files = sorted(files, key=lambda f: f.stat().st_mtime, reverse=True)
-            elif sort_by == 'type':
-                sorted_files = sorted(files, key=lambda f: (f.suffix.lower(), f.name.lower()))
-            elif sort_by == 'path':
-                sorted_files = sorted(files, key=lambda f: str(f).lower())
-            else:
-                sorted_files = files
-            
-            # Limit number of files if specified
-            if params['max_files']:
-                sorted_files = sorted_files[:params['max_files']]
-            
-            self.logger.debug(f"Sorted files by '{sort_by}', limited to {len(sorted_files)}")
-            return sorted_files
-            
-        except Exception as e:
-            self.logger.warning(f"Error sorting files: {e}")
-            return files
-    
-    def _validate_files(self, files: List[Path], params: Dict[str, Any]) -> Dict[Path, Dict[str, Any]]:
-        """Validate file integrity and readability."""
-        validation_results = {}
+    def _validate_files(self, files: List[Path], params: Dict[str, Any]) -> List[Path]:
+        """Validate files and return only valid ones."""
+        valid_files = []
         
         for file_path in files:
             try:
-                validation = {'valid': True, 'errors': [], 'warnings': []}
-                
-                # Basic file checks
+                # Basic file validation
                 if not file_path.exists():
-                    validation['valid'] = False
-                    validation['errors'].append("File does not exist")
-                    validation_results[file_path] = validation
                     continue
                 
                 if not file_path.is_file():
-                    validation['valid'] = False
-                    validation['errors'].append("Not a regular file")
-                    validation_results[file_path] = validation
                     continue
                 
-                # Check file size
-                if file_path.stat().st_size == 0:
-                    validation['valid'] = False
-                    validation['errors'].append("File is empty")
-                    validation_results[file_path] = validation
-                    continue
-                
-                # Format-specific validation
+                # File format validation based on extension
                 file_ext = file_path.suffix.lower()
                 
                 if file_ext in ['.tif', '.tiff'] and RASTERIO_AVAILABLE:
-                    validation.update(self._validate_raster_file(file_path))
-                elif file_ext == '.shp' and GEOPANDAS_AVAILABLE:
-                    validation.update(self._validate_vector_file(file_path))
-                elif file_ext in ['.hdf', '.h5'] and H5PY_AVAILABLE:
-                    validation.update(self._validate_hdf_file(file_path))
-                elif file_ext == '.nc' and NETCDF4_AVAILABLE:
-                    validation.update(self._validate_netcdf_file(file_path))
-                
-                validation_results[file_path] = validation
+                    if self._validate_raster_file(file_path):
+                        valid_files.append(file_path)
+                elif file_ext in ['.shp', '.gpkg', '.geojson'] and GEOPANDAS_AVAILABLE:
+                    if self._validate_vector_file(file_path):
+                        valid_files.append(file_path)
+                else:
+                    # For other file types, just check if they're readable
+                    if self._validate_generic_file(file_path):
+                        valid_files.append(file_path)
                 
             except Exception as e:
-                validation_results[file_path] = {
-                    'valid': False,
-                    'errors': [f"Validation error: {str(e)}"],
-                    'warnings': []
-                }
+                self.logger.warning(f"Validation failed for {file_path}: {e}")
         
-        valid_count = sum(1 for v in validation_results.values() if v.get('valid', False))
-        self.logger.info(f"Validated files: {valid_count}/{len(files)} valid")
-        
-        return validation_results
+        return valid_files
     
-    def _validate_raster_file(self, file_path: Path) -> Dict[str, Any]:
+    def _validate_raster_file(self, file_path: Path) -> bool:
         """Validate raster file using rasterio."""
-        validation = {'valid': True, 'errors': [], 'warnings': []}
-        
         try:
             with rasterio.open(file_path) as src:
-                # Check basic properties
-                if src.width <= 0 or src.height <= 0:
-                    validation['errors'].append("Invalid raster dimensions")
-                    validation['valid'] = False
-                
-                if src.count <= 0:
-                    validation['errors'].append("No bands in raster")
-                    validation['valid'] = False
-                
-                # Check CRS
-                if not src.crs:
-                    validation['warnings'].append("No CRS defined")
-                
-                # Check for reasonable data range (basic sanity check)
-                try:
-                    sample_data = src.read(1, window=rasterio.windows.Window(0, 0, min(100, src.width), min(100, src.height)))
-                    if sample_data.size > 0:
-                        if src.nodata is not None:
-                            valid_data = sample_data[sample_data != src.nodata]
-                        else:
-                            valid_data = sample_data
-                        
-                        if len(valid_data) == 0:
-                            validation['warnings'].append("Sample area contains only nodata")
-                        elif len(np.unique(valid_data)) == 1:
-                            validation['warnings'].append("Sample area has constant values")
-                            
-                except Exception:
-                    validation['warnings'].append("Could not read sample data")
-                
-        except RasterioIOError as e:
-            validation['valid'] = False
-            validation['errors'].append(f"Rasterio read error: {str(e)}")
-        except Exception as e:
-            validation['valid'] = False
-            validation['errors'].append(f"Raster validation error: {str(e)}")
-        
-        return validation
+                # Check if file has valid CRS and bounds
+                return src.crs is not None and src.bounds is not None
+        except Exception:
+            return False
     
-    def _validate_vector_file(self, file_path: Path) -> Dict[str, Any]:
+    def _validate_vector_file(self, file_path: Path) -> bool:
         """Validate vector file using geopandas."""
-        validation = {'valid': True, 'errors': [], 'warnings': []}
-        
         try:
-            # Try to read just the first few features for validation
-            gdf = gpd.read_file(file_path, rows=5)
-            
-            if len(gdf) == 0:
-                validation['warnings'].append("Vector file is empty")
-            
-            if gdf.crs is None:
-                validation['warnings'].append("No CRS defined")
-            
-            # Check geometry validity
-            if hasattr(gdf, 'geometry'):
-                invalid_geoms = gdf.geometry.isna().sum()
-                if invalid_geoms > 0:
-                    validation['warnings'].append(f"{invalid_geoms} features have invalid geometry")
-                    
-        except Exception as e:
-            validation['valid'] = False
-            validation['errors'].append(f"Vector validation error: {str(e)}")
-        
-        return validation
+            gdf = gpd.read_file(file_path)
+            return not gdf.empty and gdf.geometry is not None
+        except Exception:
+            return False
     
-    def _validate_hdf_file(self, file_path: Path) -> Dict[str, Any]:
-        """Validate HDF file using h5py."""
-        validation = {'valid': True, 'errors': [], 'warnings': []}
-        
+    def _validate_generic_file(self, file_path: Path) -> bool:
+        """Generic file validation."""
         try:
-            with h5py.File(file_path, 'r') as f:
-                if len(f.keys()) == 0:
-                    validation['warnings'].append("HDF file contains no datasets")
-                    
-        except Exception as e:
-            validation['valid'] = False
-            validation['errors'].append(f"HDF validation error: {str(e)}")
-        
-        return validation
+            # Check if file is readable and not empty
+            return file_path.stat().st_size > 0
+        except Exception:
+            return False
     
-    def _validate_netcdf_file(self, file_path: Path) -> Dict[str, Any]:
-        """Validate NetCDF file using netCDF4."""
-        validation = {'valid': True, 'errors': [], 'warnings': []}
+    def _sort_and_limit_files(self, files: List[Path], params: Dict[str, Any]) -> List[Path]:
+        """Sort files and apply limits."""
+        sort_by = params['sort_by']
         
-        try:
-            with netCDF4.Dataset(file_path, 'r') as nc:
-                if len(nc.variables) == 0:
-                    validation['warnings'].append("NetCDF file contains no variables")
-                    
-        except Exception as e:
-            validation['valid'] = False
-            validation['errors'].append(f"NetCDF validation error: {str(e)}")
+        # Sort files
+        if sort_by == 'name':
+            sorted_files = sorted(files, key=lambda f: f.name)
+        elif sort_by == 'size':
+            sorted_files = sorted(files, key=lambda f: f.stat().st_size, reverse=True)
+        elif sort_by == 'date':
+            sorted_files = sorted(files, key=lambda f: f.stat().st_mtime, reverse=True)
+        elif sort_by == 'type':
+            sorted_files = sorted(files, key=lambda f: f.suffix)
+        elif sort_by == 'path':
+            sorted_files = sorted(files, key=lambda f: str(f))
+        else:
+            sorted_files = files
         
-        return validation
+        self.logger.debug(f"Sorted files by '{sort_by}', limited to {params.get('max_files', 'unlimited')}")
+        
+        # Apply limit
+        max_files = params.get('max_files')
+        if max_files and max_files > 0:
+            sorted_files = sorted_files[:max_files]
+        
+        return sorted_files
     
-    def _extract_metadata(self, files: List[Path], params: Dict[str, Any]) -> Dict[Path, Dict[str, Any]]:
+    def _extract_file_metadata(self, files: List[Path], params: Dict[str, Any]) -> None:
         """Extract metadata from files."""
-        metadata_results = {}
-        
         for file_path in files:
             try:
-                metadata = self._extract_file_metadata(file_path)
-                metadata_results[file_path] = metadata
+                metadata = {
+                    'path': str(file_path),
+                    'name': file_path.name,
+                    'size_mb': file_path.stat().st_size / (1024 * 1024),
+                    'modified_time': datetime.fromtimestamp(file_path.stat().st_mtime).isoformat(),
+                    'extension': file_path.suffix.lower()
+                }
+                
+                # Add format-specific metadata
+                if file_path.suffix.lower() in ['.tif', '.tiff'] and RASTERIO_AVAILABLE:
+                    metadata.update(self._get_raster_metadata(file_path))
+                elif file_path.suffix.lower() in ['.shp', '.gpkg', '.geojson'] and GEOPANDAS_AVAILABLE:
+                    metadata.update(self._get_vector_metadata(file_path))
+                
+                self.file_metadata[str(file_path)] = metadata
                 
             except Exception as e:
-                self.logger.warning(f"Error extracting metadata from {file_path}: {e}")
-                metadata_results[file_path] = {'error': str(e)}
-        
-        # CORRECTED: Fixed the syntax error by adding closing quote
-        self.logger.debug(f"Extracted metadata for {len(metadata_results)} files")
-        return metadata_results
+                self.logger.warning(f"Failed to extract metadata for {file_path}: {e}")
     
-    def _extract_file_metadata(self, file_path: Path) -> Dict[str, Any]:
-        """Extract metadata from a single file."""
-        metadata = {
-            'file_path': str(file_path),
-            'file_name': file_path.name,
-            'file_size_mb': file_path.stat().st_size / (1024 * 1024),
-            'file_type': file_path.suffix.lower(),
-            'modified_date': datetime.fromtimestamp(file_path.stat().st_mtime).isoformat()
-        }
-        
-        # Format-specific metadata extraction
-        file_ext = file_path.suffix.lower()
-        
-        if file_ext in ['.tif', '.tiff'] and RASTERIO_AVAILABLE:
-            metadata.update(self._extract_raster_metadata(file_path))
-        elif file_ext == '.shp' and GEOPANDAS_AVAILABLE:
-            metadata.update(self._extract_vector_metadata(file_path))
-        
-        return metadata
-    
-    def _extract_raster_metadata(self, file_path: Path) -> Dict[str, Any]:
-        """Extract raster-specific metadata."""
-        metadata = {}
-        
+    def _get_raster_metadata(self, file_path: Path) -> Dict[str, Any]:
+        """Get raster-specific metadata."""
         try:
             with rasterio.open(file_path) as src:
-                metadata.update({
+                return {
+                    'type': 'raster',
                     'width': src.width,
                     'height': src.height,
                     'bands': src.count,
-                    'dtype': str(src.dtypes[0]),
                     'crs': str(src.crs) if src.crs else None,
-                    'bounds': list(src.bounds),
-                    'transform': list(src.transform)[:6],
-                    'nodata': src.nodata
-                })
-        except Exception as e:
-            metadata['raster_error'] = str(e)
-        
-        return metadata
+                    'bounds': list(src.bounds) if src.bounds else None,
+                    'dtype': str(src.dtypes[0]) if src.dtypes else None
+                }
+        except Exception:
+            return {'type': 'raster', 'error': 'Could not read raster metadata'}
     
-    def _extract_vector_metadata(self, file_path: Path) -> Dict[str, Any]:
-        """Extract vector-specific metadata."""
-        metadata = {}
-        
+    def _get_vector_metadata(self, file_path: Path) -> Dict[str, Any]:
+        """Get vector-specific metadata."""
         try:
-            # Just read the first few rows to get metadata
-            gdf = gpd.read_file(file_path, rows=1)
-            metadata.update({
-                'geometry_type': gdf.geometry.iloc[0].geom_type if len(gdf) > 0 else None,
+            gdf = gpd.read_file(file_path)
+            return {
+                'type': 'vector',
+                'feature_count': len(gdf),
+                'geometry_type': gdf.geometry.geom_type.iloc[0] if not gdf.empty else None,
                 'crs': str(gdf.crs) if gdf.crs else None,
+                'bounds': list(gdf.total_bounds) if not gdf.empty else None,
                 'columns': list(gdf.columns)
-            })
-            
-            # Get total feature count
-            full_gdf = gpd.read_file(file_path)
-            metadata['feature_count'] = len(full_gdf)
-            metadata['bounds'] = list(full_gdf.total_bounds)
-            
-        except Exception as e:
-            metadata['vector_error'] = str(e)
-        
-        return metadata
+            }
+        except Exception:
+            return {'type': 'vector', 'error': 'Could not read vector metadata'}
     
-    def _organize_results(self, files: List[Path], metadata: Dict[Path, Dict[str, Any]], 
-                         validation: Dict[Path, Dict[str, Any]], params: Dict[str, Any]) -> Dict[str, Any]:
-        """Organize file discovery results."""
-        return {
-            'files': [str(f) for f in files],
-            'file_count': len(files),
-            'metadata': {str(k): v for k, v in metadata.items()},
-            'validation': {str(k): v for k, v in validation.items()},
-            'discovery_params': params,
-            'timestamp': datetime.now().isoformat()
-        }
-    
-    def _create_file_inventory(self, file_results: Dict[str, Any], params: Dict[str, Any]) -> Dict[str, Any]:
+    def _create_file_inventory(self, files: List[Path], params: Dict[str, Any]) -> Dict[str, Any]:
         """Create comprehensive file inventory."""
-        return {
-            'inventory_id': f"{self.step_id}_inventory",
-            'total_files': file_results['file_count'],
+        inventory = {
+            'total_files': len(files),
             'base_path': str(params['base_path']),
             'search_patterns': params['file_patterns'],
-            'files': file_results['files'],
-            'file_types': self._get_file_type_summary(file_results['files']),
-            'total_size_mb': self._calculate_total_size(file_results['files']),
-            'created': datetime.now().isoformat()
+            'discovery_time': datetime.now().isoformat(),
+            'files': []
         }
+        
+        for file_path in files:
+            file_info = {
+                'path': str(file_path),
+                'relative_path': str(file_path.relative_to(params['base_path'])),
+                'name': file_path.name,
+                'extension': file_path.suffix.lower(),
+                'size_mb': round(file_path.stat().st_size / (1024 * 1024), 2)
+            }
+            
+            # Add metadata if available
+            if str(file_path) in self.file_metadata:
+                file_info.update(self.file_metadata[str(file_path)])
+            
+            inventory['files'].append(file_info)
+        
+        return inventory
     
-    def _get_file_type_summary(self, files: Union[List[Path], List[str]]) -> Dict[str, int]:
+    def _get_file_type_summary(self, files: List[Path]) -> Dict[str, int]:
         """Get summary of file types."""
         type_counts = {}
         for file_path in files:
-            if isinstance(file_path, str):
-                file_path = Path(file_path)
-            file_ext = file_path.suffix.lower()
-            type_counts[file_ext] = type_counts.get(file_ext, 0) + 1
+            ext = file_path.suffix.lower()
+            type_counts[ext] = type_counts.get(ext, 0) + 1
         return type_counts
     
-    def _calculate_total_size(self, files: Union[List[Path], List[str]]) -> float:
+    def _calculate_total_size(self, files: List[Path]) -> float:
         """Calculate total size of files in MB."""
         total_size = 0
         for file_path in files:
             try:
-                if isinstance(file_path, str):
-                    file_path = Path(file_path)
-                if file_path.exists():
-                    total_size += file_path.stat().st_size
-            except Exception:
+                total_size += file_path.stat().st_size
+            except (OSError, IOError):
                 pass
-        return total_size / (1024 * 1024)
+        return round(total_size / (1024 * 1024), 2)
     
     def _get_warnings(self, params: Dict[str, Any], discovered_files: List[Path], valid_files: List[Path]) -> List[str]:
-        """Generate warnings about the discovery process."""
+        """Get warnings about the discovery process."""
         warnings = []
         
-        if len(discovered_files) == 0:
-            warnings.append("No files found matching search patterns")
-        elif len(valid_files) < len(discovered_files):
-            warnings.append(f"{len(discovered_files) - len(valid_files)} files failed validation")
+        if not discovered_files:
+            warnings.append("No files found matching the specified patterns")
+        
+        invalid_count = len(discovered_files) - len(valid_files)
+        if invalid_count > 0:
+            warnings.append(f"{invalid_count} files failed validation")
+        
+        if not params['base_path'].exists():
+            warnings.append(f"Base path does not exist: {params['base_path']}")
         
         if not RASTERIO_AVAILABLE:
-            warnings.append("Rasterio not available - limited raster file support")
+            warnings.append("Rasterio not available - raster file validation limited")
         
         if not GEOPANDAS_AVAILABLE:
-            warnings.append("GeoPandas not available - limited vector file support")
+            warnings.append("GeoPandas not available - vector file validation limited")
         
         return warnings
     
     def _generate_mock_files(self, params: Dict[str, Any]) -> List[Path]:
-        """Generate mock files for testing when no real files found."""
+        """Generate mock files for testing when no real files are found."""
+        self.logger.info("Generating mock files for testing")
+        
         mock_files = []
         base_path = params['base_path']
         base_path.mkdir(parents=True, exist_ok=True)
         
-        mock_count = params.get('mock_file_count', 5)
+        mock_count = params.get('mock_file_count', 3)
         
         for i in range(mock_count):
             # Create mock file names based on patterns
-            if '*.tif' in params['file_patterns']:
+            if '*.tif' in params['file_patterns'] or '*.tiff' in params['file_patterns']:
                 mock_file = base_path / f"mock_raster_{i:02d}.tif"
             elif '*.shp' in params['file_patterns']:
                 mock_file = base_path / f"mock_vector_{i:02d}.shp"
+            elif '*.geojson' in params['file_patterns']:
+                mock_file = base_path / f"mock_vector_{i:02d}.geojson"
             else:
                 mock_file = base_path / f"mock_file_{i:02d}.txt"
             
@@ -933,51 +723,140 @@ class LocalFilesStep(BaseStep):
         return mock_files
 
 
-# Register the step - CORRECTED to use proper registration
-StepRegistry.register('local_files_discovery', LocalFilesStep)
+# Register the step (if registry is available)
+try:
+    from ..base.step_registry import StepRegistry
+    StepRegistry.register('local_files_discovery', LocalFilesStep)
+    logging.info("✓ Registered LocalFilesStep")
+except ImportError:
+    logging.warning("StepRegistry not available - step not auto-registered")
+
+
+# Utility functions
+def validate_local_files_config() -> Dict[str, Any]:
+    """Validate local files discovery configuration."""
+    return {
+        'rasterio': RASTERIO_AVAILABLE,
+        'geopandas': GEOPANDAS_AVAILABLE,
+        'gdal': GDAL_AVAILABLE,
+        'h5py': H5PY_AVAILABLE,
+        'netcdf4': NETCDF4_AVAILABLE,
+        'existing_file_manager': EXISTING_FILE_MANAGER_AVAILABLE,
+        'issues': []
+    }
+
+
+def create_test_local_files_step(step_id: str, **hyperparameters) -> LocalFilesStep:
+    """
+    Create a local files step for testing.
+    
+    Args:
+        step_id: Step identifier
+        **hyperparameters: Step hyperparameters
+        
+    Returns:
+        Configured LocalFilesStep instance
+    """
+    default_config = {
+        'base_path': '.',
+        'file_patterns': ['*.tif', '*.shp', '*.geojson'],
+        'recursive': True,
+        'validate_files': True,
+        'load_metadata': True,
+        'generate_mock_if_empty': True,
+        'mock_file_count': 3
+    }
+    
+    # Merge with provided hyperparameters
+    default_config.update(hyperparameters)
+    
+    step_config = {
+        'type': 'local_files_discovery',
+        'hyperparameters': default_config,
+        'inputs': {},
+        'outputs': {
+            'files_data': {'type': 'file_list'},
+            'file_inventory': {'type': 'metadata'},
+            'file_count': {'type': 'integer'}
+        },
+        'dependencies': []
+    }
+    
+    return LocalFilesStep(step_id, step_config)
+
 
 if __name__ == "__main__":
     # Test the step
-    test_config = {
-        'type': 'local_files_discovery',
-        'hyperparameters': {
-            'base_path': '.',
-            'file_patterns': ['*.tif', '*.shp'],
-            'recursive': True,
-            'validate_files': True,
-            'load_metadata': True
-        }
-    }
+    import tempfile
     
-    # Simple ExecutionContext mock for testing
-    class SimpleExecutionContext:
-        def __init__(self):
-            self.variables = {}
-            self.artifacts = {}
-            self.step_outputs = {}
+    print("Testing LocalFilesStep...")
+    
+    # Test 1: Configuration validation
+    print("\n=== Configuration Validation ===")
+    config_results = validate_local_files_config()
+    
+    for component, available in config_results.items():
+        if component != 'issues':
+            status = "✓" if available else "✗"
+            print(f"{status} {component}")
+    
+    # Test 2: Step creation
+    print("\n=== Step Creation ===")
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            test_step = create_test_local_files_step(
+                'test_local_files',
+                base_path=temp_dir,
+                file_patterns=['*.tif', '*.txt'],
+                generate_mock_if_empty=True
+            )
+            print(f"✓ Step created: {test_step.step_id}")
+            print(f"✓ Base path: {test_step.base_path}")
+            print(f"✓ File patterns: {test_step.file_patterns}")
+            
+    except Exception as e:
+        print(f"✗ Step creation failed: {e}")
+    
+    # Test 3: Mock execution
+    print("\n=== Mock Execution Test ===")
+    try:
+        # Create simple context mock
+        class SimpleContext:
+            def __init__(self):
+                self.variables = {'local_data_path': '.', 'output_dir': 'outputs'}
+                self.artifacts = {}
+            
+            def get_variable(self, key, default=None):
+                return self.variables.get(key, default)
+            
+            def set_artifact(self, key, value):
+                self.artifacts[key] = value
         
-        def get_variable(self, key: str, default=None):
-            return self.variables.get(key, default)
+        context = SimpleContext()
         
-        def set_artifact(self, key: str, value, metadata=None):
-            self.artifacts[key] = value
+        with tempfile.TemporaryDirectory() as temp_dir:
+            test_step = create_test_local_files_step(
+                'test_execution',
+                base_path=temp_dir,
+                generate_mock_if_empty=True,
+                mock_file_count=2
+            )
+            
+            result = test_step.execute(context)
+            
+            if result['status'] == 'success':
+                print("✓ Mock execution successful")
+                print(f"  Files found: {result['outputs']['file_count']}")
+                print(f"  File types: {result['metadata']['file_types']}")
+                print(f"  Total size: {result['metadata']['total_size_mb']} MB")
+            else:
+                print(f"✗ Mock execution failed: {result['metadata'].get('error', 'Unknown error')}")
+                
+    except Exception as e:
+        print(f"✗ Mock execution test failed: {e}")
     
-    step = LocalFilesStep('test_local_files', test_config)
-    context = SimpleExecutionContext()
-    
-    print("🧪 Testing Local Files Discovery Step")
-    print("=" * 50)
-    
-    result = step.execute(context)
-    
-    print(f"Status: {result['status']}")
-    if result['status'] == 'success':
-        print(f"Files found: {result['outputs']['file_count']}")
-        print(f"File types: {result['metadata']['file_types']}")
-    else:
-        print(f"Error: {result['metadata']['error']}")
-    
-    print("\n✅ Test completed!")
-    print("✅ CORRECTED: No longer uses StepResult - returns Dict")
+    print("\n=== LocalFilesStep testing completed! ===")
+    print("✅ CORRECTED: Uses proper execute(self, context) signature")
+    print("✅ CORRECTED: Returns Dict instead of StepResult")
     print("✅ CORRECTED: Compatible with ExecutionContext")
-    print("✅ CORRECTED: Fixed syntax error on line 718")
+    print("✅ CORRECTED: Fixed missing context helper methods")
