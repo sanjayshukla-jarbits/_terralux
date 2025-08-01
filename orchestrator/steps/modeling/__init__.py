@@ -27,7 +27,16 @@ __all__ = [
 ]
 
 # Register all modeling steps with the registry
-from ..base.step_registry import StepRegistry
+try:
+    from ..base import StepRegistry, register_step_safe, BaseStep
+    logger.debug("✓ StepRegistry imported successfully")
+    REGISTRY_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"StepRegistry not available: {e}")
+    StepRegistry = None
+    register_step_safe = None
+    BaseStep = None
+    REGISTRY_AVAILABLE = False
 
 def register_modeling_steps():
     """Register all modeling steps with the step registry."""

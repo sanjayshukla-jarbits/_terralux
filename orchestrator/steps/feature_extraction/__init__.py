@@ -40,16 +40,22 @@ _IMPORT_ERRORS = {}
 StepRegistry = None
 register_step_safe = None
 
+# Add proper error handling for imports
 try:
-    from ..base import StepRegistry, register_step_safe
+    from ..base import StepRegistry, register_step_safe, BaseStep
     logger.debug("✓ StepRegistry imported successfully")
+    REGISTRY_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"StepRegistry not available: {e}")
-
+    StepRegistry = None
+    register_step_safe = None
+    BaseStep = None
+    REGISTRY_AVAILABLE = False
 
 def _safe_import_step(step_name: str, module_name: str, class_name: str, 
                      step_type: str, aliases: Optional[List[str]] = None,
-                     category: str = 'feature_extraction') -> bool:
+                     category: str = 'feature_extraction',
+                     name: Optional[str] = None) -> bool:
     """
     Safely import and register a feature extraction step.
     
@@ -60,6 +66,7 @@ def _safe_import_step(step_name: str, module_name: str, class_name: str,
         step_type: Step type identifier for registration
         aliases: Optional list of aliases
         category: Step category
+        name: Optional name parameter (added for compatibility)
         
     Returns:
         True if import and registration successful
@@ -79,7 +86,8 @@ def _safe_import_step(step_name: str, module_name: str, class_name: str,
                 metadata={
                     'description': f'{step_name} step',
                     'module': f'orchestrator.steps.feature_extraction.{module_name}',
-                    'class': class_name
+                    'class': class_name,
+                    'name': name or step_name
                 }
             )
             if not success:
@@ -121,43 +129,48 @@ def _register_feature_extraction_steps():
     # Core feature extraction steps
     core_steps = [
         {
-            'name': 'Spectral Indices Extraction',
-            'module': 'spectral_indices_step',
-            'class': 'SpectralIndicesStep',
-            'type': 'spectral_indices_extraction',
-            'aliases': ['spectral_indices', 'indices', 'ndvi', 'ndwi']
+            'step_name': 'Spectral Indices Extraction',
+            'module_name': 'spectral_indices_step',
+            'class_name': 'SpectralIndicesExtractionStep',
+            'step_type': 'spectral_indices_extraction',
+            'aliases': ['indices', 'ndvi', 'spectral_features'],
+            'name': 'spectral_indices_extraction'
         },
         {
-            'name': 'Topographic Derivatives',
-            'module': 'topographic_derivatives_step',
-            'class': 'TopographicDerivativesStep',
-            'type': 'topographic_derivatives',
-            'aliases': ['topographic_features', 'slope', 'aspect', 'curvature']
+            'step_name': 'Topographic Derivatives',
+            'module_name': 'topographic_derivatives_step',
+            'class_name': 'TopographicDerivativesStep',
+            'step_type': 'topographic_derivatives',
+            'aliases': ['slope_aspect', 'terrain_features', 'dem_derivatives'],
+            'name': 'topographic_derivatives'
         },
         {
-            'name': 'Texture Analysis',
-            'module': 'texture_analysis_step',
-            'class': 'TextureAnalysisStep',
-            'type': 'texture_analysis',
-            'aliases': ['texture_features', 'glcm', 'gabor']
+            'step_name': 'Texture Analysis',
+            'module_name': 'texture_analysis_step',
+            'class_name': 'TextureAnalysisStep',
+            'step_type': 'texture_analysis',
+            'aliases': ['glcm', 'texture_features', 'spatial_features'],
+            'name': 'texture_analysis'
         }
     ]
     
     # Advanced feature extraction steps
     advanced_steps = [
         {
-            'name': 'Absorption Features',
-            'module': 'absorption_feature_step',
-            'class': 'AbsorptionFeatureStep',
-            'type': 'absorption_features',
-            'aliases': ['mineral_features', 'spectral_features']
+            'step_name': 'Absorption Feature Analysis',
+            'module_name': 'absorption_features_step',
+            'class_name': 'AbsorptionFeatureStep',
+            'step_type': 'absorption_features',
+            'aliases': ['spectral_absorption', 'mineral_features'],
+            'name': 'absorption_features'
         },
         {
-            'name': 'Feature Integration',
-            'module': 'feature_integration_step',
-            'class': 'FeatureIntegrationStep', 
-            'type': 'feature_integration',
-            'aliases': ['feature_stacking', 'multi_feature']
+            'step_name': 'Feature Integration',
+            'module_name': 'feature_integration_step',
+            'class_name': 'FeatureIntegrationStep',
+            'step_type': 'feature_integration',
+            'aliases': ['feature_stacking', 'multi_source_features'],
+            'name': 'feature_integration'
         }
     ]
     
@@ -183,8 +196,8 @@ def _register_feature_extraction_steps():
         logger.info(f"✓ Advanced steps: {successful_advanced}/{total_advanced} registered")
     
     if successful_core < total_core:
-        missing_core = [s['name'] for s in core_steps 
-                       if not _STEP_IMPORTS_SUCCESSFUL.get(s['name'], False)]
+        missing_core = [s['step_name'] for s in core_steps 
+                       if not _STEP_IMPORTS_SUCCESSFUL.get(s['step_name'], False)]
         logger.warning(f"Missing core feature extraction steps: {missing_core}")
     
     return {
@@ -219,79 +232,24 @@ def is_step_available(step_type: str) -> bool:
 def get_missing_dependencies() -> List[str]:
     """Get list of missing dependencies based on import errors."""
     missing_deps = []
-    
-    for step_name, error_msg in _IMPORT_ERRORS.items():
-        if 'numpy' in error_msg.lower():
-            missing_deps.append('numpy')
-        elif 'rasterio' in error_msg.lower():
-            missing_deps.append('rasterio')
-        elif 'gdal' in error_msg.lower():
-            missing_deps.append('gdal')
-        elif 'skimage' in error_msg.lower():
-            missing_deps.append('scikit-image')
-        elif 'scipy' in error_msg.lower():
-            missing_deps.append('scipy')
-        elif 'cv2' in error_msg.lower():
-            missing_deps.append('opencv-python')
-    
-    return list(set(missing_deps))
-
-
-def validate_feature_extraction_setup() -> Dict[str, Any]:
-    """Validate the feature extraction module setup."""
-    validation_results = {
-        'valid': True,
-        'warnings': [],
-        'errors': [],
-        'summary': {}
-    }
-    
-    # Check core step availability
-    core_steps = ['spectral_indices_extraction', 'topographic_derivatives', 'texture_analysis']
-    missing_core = [step for step in core_steps if not is_step_available(step)]
-    
-    if missing_core:
-        validation_results['warnings'].append(f"Missing core feature extraction steps: {missing_core}")
-    
-    # Check for import errors
-    failed_imports = [name for name, success in _STEP_IMPORTS_SUCCESSFUL.items() if not success]
-    if failed_imports:
-        validation_results['warnings'].append(f"Failed imports: {failed_imports}")
-    
-    # Check dependencies
-    missing_deps = get_missing_dependencies()
-    if missing_deps:
-        validation_results['warnings'].append(f"Missing dependencies: {missing_deps}")
-    
-    # Summary
-    validation_results['summary'] = {
-        'total_steps_available': len(_AVAILABLE_STEPS),
-        'core_steps_available': len([s for s in core_steps if is_step_available(s)]),
-        'failed_imports': len(failed_imports),
-        'missing_dependencies': len(missing_deps),
-        'overall_status': 'healthy' if len(_AVAILABLE_STEPS) > 0 else 'degraded'
-    }
-    
-    return validation_results
+    for step_name, error in _IMPORT_ERRORS.items():
+        if "No module named" in error:
+            # Extract module name from error
+            module_name = error.split("No module named ")[1].strip("'\"")
+            if module_name not in missing_deps:
+                missing_deps.append(module_name)
+    return missing_deps
 
 
 def get_feature_categories() -> Dict[str, List[str]]:
     """Get feature extraction steps organized by category."""
     categories = {
-        'spectral': [
-            'spectral_indices_extraction',
-            'absorption_features'
-        ],
-        'spatial': [
-            'topographic_derivatives',
-            'texture_analysis'
-        ],
-        'integration': [
-            'feature_integration'
-        ]
+        'spectral': ['spectral_indices_extraction', 'absorption_features'],
+        'spatial': ['texture_analysis', 'topographic_derivatives'],
+        'integration': ['feature_integration']
     }
     
-    # Filter by availability
+    # Filter by available steps
     available_categories = {}
     for category, steps in categories.items():
         available_steps = [step for step in steps if is_step_available(step)]
@@ -301,63 +259,78 @@ def get_feature_categories() -> Dict[str, List[str]]:
     return available_categories
 
 
+def validate_feature_extraction_setup() -> Dict[str, Any]:
+    """Validate the feature extraction setup and return status."""
+    status = {
+        'valid': True,
+        'warnings': [],
+        'errors': [],
+        'available_steps': len(_AVAILABLE_STEPS),
+        'missing_dependencies': get_missing_dependencies()
+    }
+    
+    # Check core functionality
+    core_steps = ['spectral_indices_extraction', 'topographic_derivatives', 'texture_analysis']
+    available_core = [step for step in core_steps if is_step_available(step)]
+    
+    if len(available_core) == 0:
+        status['valid'] = False
+        status['errors'].append("No core feature extraction steps available")
+    elif len(available_core) < len(core_steps):
+        missing_core = [step for step in core_steps if not is_step_available(step)]
+        status['warnings'].append(f"Missing core steps: {missing_core}")
+    
+    # Check for missing dependencies
+    if status['missing_dependencies']:
+        status['warnings'].append(f"Missing dependencies: {status['missing_dependencies']}")
+    
+    return status
+
+
 def print_module_status():
-    """Print comprehensive module status for debugging."""
-    print("=" * 60)
-    print("FEATURE EXTRACTION MODULE STATUS")
-    print("=" * 60)
-    
-    # Basic info
-    print(f"Version: {__version__}")
+    """Print detailed module status information."""
+    print("Feature Extraction Module Status")
+    print("=" * 40)
+    print(f"Module Version: {__version__}")
     print(f"Available Steps: {len(_AVAILABLE_STEPS)}")
-    print(f"Registry Available: {StepRegistry is not None}")
+    print(f"Step Aliases: {len(_STEP_ALIASES)}")
+    print(f"Import Errors: {len(_IMPORT_ERRORS)}")
     
-    # Step import status
-    print(f"\nStep Import Status:")
-    for step_name, success in _STEP_IMPORTS_SUCCESSFUL.items():
-        icon = "✓" if success else "✗"
-        print(f"  {icon} {step_name}")
-        if not success and step_name in _IMPORT_ERRORS:
-            print(f"    Error: {_IMPORT_ERRORS[step_name]}")
-    
-    # Available steps and aliases
     if _AVAILABLE_STEPS:
         print(f"\nAvailable Step Types:")
-        for step_type in _AVAILABLE_STEPS:
-            print(f"  • {step_type}")
+        for step in sorted(_AVAILABLE_STEPS):
+            print(f"  ✓ {step}")
     
     if _STEP_ALIASES:
         print(f"\nStep Aliases:")
-        for alias, canonical in _STEP_ALIASES.items():
+        for alias, canonical in sorted(_STEP_ALIASES.items()):
             print(f"  • {alias} → {canonical}")
     
-    # Feature categories
+    # Show feature categories
     categories = get_feature_categories()
     if categories:
         print(f"\nFeature Categories:")
         for category, steps in categories.items():
-            print(f"  • {category}: {len(steps)} steps")
-            for step in steps:
-                print(f"    - {step}")
+            print(f"  • {category}: {', '.join(steps)}")
     
-    # Validation summary
+    if _IMPORT_ERRORS:
+        print(f"\nImport Errors:")
+        for step, error in _IMPORT_ERRORS.items():
+            print(f"  ✗ {step}: {error}")
+    
+    # Validation status
     validation = validate_feature_extraction_setup()
-    print(f"\nValidation Summary:")
-    print(f"  Status: {validation['summary']['overall_status']}")
-    print(f"  Core Steps Available: {validation['summary']['core_steps_available']}/3")
-    print(f"  Total Steps Available: {validation['summary']['total_steps_available']}")
-    
-    if validation['errors']:
-        print(f"  Errors: {len(validation['errors'])}")
-        for error in validation['errors']:
-            print(f"    ✗ {error}")
+    print(f"\nValidation Status: {'✓ VALID' if validation['valid'] else '✗ INVALID'}")
     
     if validation['warnings']:
-        print(f"  Warnings: {len(validation['warnings'])}")
+        print("Warnings:")
         for warning in validation['warnings']:
-            print(f"    ⚠ {warning}")
+            print(f"  ⚠ {warning}")
     
-    print("=" * 60)
+    if validation['errors']:
+        print("Errors:")
+        for error in validation['errors']:
+            print(f"  ✗ {error}")
 
 
 def get_help() -> str:
@@ -426,7 +399,7 @@ def _initialize_feature_extraction_module():
 # Export public API
 __all__ = [
     # Step classes (dynamically added based on successful imports)
-    'SpectralIndicesStep',
+    'SpectralIndicesExtractionStep',
     'TopographicDerivativesStep',
     'TextureAnalysisStep',
     'AbsorptionFeatureStep',

@@ -42,16 +42,22 @@ _IMPORT_ERRORS = {}
 StepRegistry = None
 register_step_safe = None
 
+# Add proper error handling for imports
 try:
-    from ..base import StepRegistry, register_step_safe
+    from ..base import StepRegistry, register_step_safe, BaseStep
     logger.debug("✓ StepRegistry imported successfully")
+    REGISTRY_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"StepRegistry not available: {e}")
-
+    StepRegistry = None
+    register_step_safe = None
+    BaseStep = None
+    REGISTRY_AVAILABLE = False
 
 def _safe_import_step(step_name: str, module_name: str, class_name: str, 
                      step_type: str, aliases: Optional[List[str]] = None,
-                     category: str = 'preprocessing') -> bool:
+                     category: str = 'preprocessing',
+                     name: Optional[str] = None) -> bool:
     """
     Safely import and register a preprocessing step.
     
@@ -62,6 +68,7 @@ def _safe_import_step(step_name: str, module_name: str, class_name: str,
         step_type: Step type identifier for registration
         aliases: Optional list of aliases
         category: Step category
+        name: Optional name parameter (added for compatibility)
         
     Returns:
         True if import and registration successful
@@ -81,7 +88,8 @@ def _safe_import_step(step_name: str, module_name: str, class_name: str,
                 metadata={
                     'description': f'{step_name} step',
                     'module': f'orchestrator.steps.preprocessing.{module_name}',
-                    'class': class_name
+                    'class': class_name,
+                    'name': name or step_name
                 }
             )
             if not success:
@@ -123,57 +131,64 @@ def _register_preprocessing_steps():
     # Core preprocessing steps
     core_steps = [
         {
-            'name': 'Atmospheric Correction',
-            'module': 'atmospheric_correction_step',
-            'class': 'AtmosphericCorrectionStep',
-            'type': 'atmospheric_correction',
-            'aliases': ['atm_correction', 'sen2cor', 'flaash']
+            'step_name': 'Atmospheric Correction',
+            'module_name': 'atmospheric_correction_step',
+            'class_name': 'AtmosphericCorrectionStep',
+            'step_type': 'atmospheric_correction',
+            'aliases': ['sen2cor', 'flaash', 'atm_correction'],
+            'name': 'atmospheric_correction'
         },
         {
-            'name': 'Geometric Correction',
-            'module': 'geometric_correction_step',
-            'class': 'GeometricCorrectionStep',
-            'type': 'geometric_correction',
-            'aliases': ['orthorectification', 'georeferencing']
+            'step_name': 'Geometric Correction',
+            'module_name': 'geometric_correction_step',
+            'class_name': 'GeometricCorrectionStep',
+            'step_type': 'geometric_correction',
+            'aliases': ['orthorectification', 'georeferencing'],
+            'name': 'geometric_correction'
         },
         {
-            'name': 'Cloud Masking',
-            'module': 'cloud_masking_step',
-            'class': 'CloudMaskingStep',
-            'type': 'cloud_masking',
-            'aliases': ['cloud_detection', 'shadow_masking']
+            'step_name': 'Cloud Masking',
+            'module_name': 'cloud_masking_step',
+            'class_name': 'CloudMaskingStep',
+            'step_type': 'cloud_masking',
+            'aliases': ['cloud_detection', 'shadow_masking'],
+            'name': 'cloud_masking'
         },
         {
-            'name': 'Spatial Resampling',
-            'module': 'spatial_resampling_step',
-            'class': 'SpatialResamplingStep',
-            'type': 'spatial_resampling',
-            'aliases': ['resampling', 'resolution_harmonization']
+            'step_name': 'Spatial Resampling',
+            'module_name': 'spatial_resampling_step',
+            'class_name': 'SpatialResamplingStep',
+            'step_type': 'spatial_resampling',
+            'aliases': ['resampling', 'resolution_harmonization'],
+            'name': 'spatial_resampling'
         },
         {
-            'name': 'Band Math',
-            'module': 'band_math_step',
-            'class': 'BandMathStep',
-            'type': 'band_math',
-            'aliases': ['band_calculation', 'band_operations']
+            'step_name': 'Band Math',
+            'module_name': 'band_math_step',
+            'class_name': 'BandMathStep',
+            'step_type': 'band_math',
+            'aliases': ['band_calculation', 'band_operations'],
+            'name': 'band_math'
         }
     ]
     
     # Additional processing steps
     additional_steps = [
         {
-            'name': 'Data Validation',
-            'module': 'data_validation_step',
-            'class': 'DataValidationStep',
-            'type': 'data_validation',
-            'aliases': ['validation', 'quality_control']
+            'step_name': 'Data Validation',
+            'module_name': 'data_validation_step',
+            'class_name': 'DataValidationStep',
+            'step_type': 'data_validation',
+            'aliases': ['validation', 'quality_control'],
+            'name': 'data_validation'
         },
         {
-            'name': 'Inventory Generation',
-            'module': 'inventory_generation_step',
-            'class': 'InventoryGenerationStep',
-            'type': 'inventory_generation',
-            'aliases': ['inventory', 'catalog_generation']
+            'step_name': 'Inventory Generation',
+            'module_name': 'inventory_generation_step',
+            'class_name': 'InventoryGenerationStep',
+            'step_type': 'inventory_generation',
+            'aliases': ['inventory', 'catalog_generation'],
+            'name': 'inventory_generation'
         }
     ]
     
@@ -199,8 +214,8 @@ def _register_preprocessing_steps():
         logger.info(f"✓ Additional steps: {successful_additional}/{total_additional} registered")
     
     if successful_core < total_core:
-        missing_core = [s['name'] for s in core_steps 
-                       if not _STEP_IMPORTS_SUCCESSFUL.get(s['name'], False)]
+        missing_core = [s['step_name'] for s in core_steps 
+                       if not _STEP_IMPORTS_SUCCESSFUL.get(s['step_name'], False)]
         logger.warning(f"Missing core preprocessing steps: {missing_core}")
     
     return {
@@ -235,108 +250,80 @@ def is_step_available(step_type: str) -> bool:
 def get_missing_dependencies() -> List[str]:
     """Get list of missing dependencies based on import errors."""
     missing_deps = []
-    
-    for step_name, error_msg in _IMPORT_ERRORS.items():
-        if 'rasterio' in error_msg.lower():
-            missing_deps.append('rasterio')
-        elif 'gdal' in error_msg.lower():
-            missing_deps.append('gdal')
-        elif 'skimage' in error_msg.lower():
-            missing_deps.append('scikit-image')
-        elif 'cv2' in error_msg.lower():
-            missing_deps.append('opencv-python')
-        elif 'scipy' in error_msg.lower():
-            missing_deps.append('scipy')
-    
-    return list(set(missing_deps))
+    for step_name, error in _IMPORT_ERRORS.items():
+        if "No module named" in error:
+            # Extract module name from error
+            module_name = error.split("No module named ")[1].strip("'\"")
+            if module_name not in missing_deps:
+                missing_deps.append(module_name)
+    return missing_deps
 
 
 def validate_preprocessing_setup() -> Dict[str, Any]:
-    """Validate the preprocessing module setup."""
-    validation_results = {
+    """Validate the preprocessing setup and return status."""
+    status = {
         'valid': True,
         'warnings': [],
         'errors': [],
-        'summary': {}
+        'available_steps': len(_AVAILABLE_STEPS),
+        'missing_dependencies': get_missing_dependencies()
     }
     
-    # Check core step availability
+    # Check core functionality
     core_steps = ['atmospheric_correction', 'geometric_correction', 'cloud_masking']
-    missing_core = [step for step in core_steps if not is_step_available(step)]
+    available_core = [step for step in core_steps if is_step_available(step)]
     
-    if missing_core:
-        validation_results['warnings'].append(f"Missing core preprocessing steps: {missing_core}")
+    if len(available_core) == 0:
+        status['valid'] = False
+        status['errors'].append("No core preprocessing steps available")
+    elif len(available_core) < len(core_steps):
+        missing_core = [step for step in core_steps if not is_step_available(step)]
+        status['warnings'].append(f"Missing core steps: {missing_core}")
     
-    # Check for import errors
-    failed_imports = [name for name, success in _STEP_IMPORTS_SUCCESSFUL.items() if not success]
-    if failed_imports:
-        validation_results['warnings'].append(f"Failed imports: {failed_imports}")
+    # Check for missing dependencies
+    if status['missing_dependencies']:
+        status['warnings'].append(f"Missing dependencies: {status['missing_dependencies']}")
     
-    # Check dependencies
-    missing_deps = get_missing_dependencies()
-    if missing_deps:
-        validation_results['warnings'].append(f"Missing dependencies: {missing_deps}")
-    
-    # Summary
-    validation_results['summary'] = {
-        'total_steps_available': len(_AVAILABLE_STEPS),
-        'core_steps_available': len([s for s in core_steps if is_step_available(s)]),
-        'failed_imports': len(failed_imports),
-        'missing_dependencies': len(missing_deps),
-        'overall_status': 'healthy' if len(_AVAILABLE_STEPS) > 0 else 'degraded'
-    }
-    
-    return validation_results
+    return status
 
 
 def print_module_status():
-    """Print comprehensive module status for debugging."""
-    print("=" * 60)
-    print("PREPROCESSING MODULE STATUS")
-    print("=" * 60)
-    
-    # Basic info
-    print(f"Version: {__version__}")
+    """Print detailed module status information."""
+    print("Preprocessing Module Status")
+    print("=" * 40)
+    print(f"Module Version: {__version__}")
     print(f"Available Steps: {len(_AVAILABLE_STEPS)}")
-    print(f"Registry Available: {StepRegistry is not None}")
+    print(f"Step Aliases: {len(_STEP_ALIASES)}")
+    print(f"Import Errors: {len(_IMPORT_ERRORS)}")
     
-    # Step import status
-    print(f"\nStep Import Status:")
-    for step_name, success in _STEP_IMPORTS_SUCCESSFUL.items():
-        icon = "✓" if success else "✗"
-        print(f"  {icon} {step_name}")
-        if not success and step_name in _IMPORT_ERRORS:
-            print(f"    Error: {_IMPORT_ERRORS[step_name]}")
-    
-    # Available steps and aliases
     if _AVAILABLE_STEPS:
         print(f"\nAvailable Step Types:")
-        for step_type in _AVAILABLE_STEPS:
-            print(f"  • {step_type}")
+        for step in sorted(_AVAILABLE_STEPS):
+            print(f"  ✓ {step}")
     
     if _STEP_ALIASES:
         print(f"\nStep Aliases:")
-        for alias, canonical in _STEP_ALIASES.items():
+        for alias, canonical in sorted(_STEP_ALIASES.items()):
             print(f"  • {alias} → {canonical}")
     
-    # Validation summary
-    validation = validate_preprocessing_setup()
-    print(f"\nValidation Summary:")
-    print(f"  Status: {validation['summary']['overall_status']}")
-    print(f"  Core Steps Available: {validation['summary']['core_steps_available']}/3")
-    print(f"  Total Steps Available: {validation['summary']['total_steps_available']}")
+    if _IMPORT_ERRORS:
+        print(f"\nImport Errors:")
+        for step, error in _IMPORT_ERRORS.items():
+            print(f"  ✗ {step}: {error}")
     
-    if validation['errors']:
-        print(f"  Errors: {len(validation['errors'])}")
-        for error in validation['errors']:
-            print(f"    ✗ {error}")
+    # Validation status
+    validation = validate_preprocessing_setup()
+    print(f"\nValidation Status: {'✓ VALID' if validation['valid'] else '✗ INVALID'}")
     
     if validation['warnings']:
-        print(f"  Warnings: {len(validation['warnings'])}")
+        print("Warnings:")
         for warning in validation['warnings']:
-            print(f"    ⚠ {warning}")
+            print(f"  ⚠ {warning}")
     
-    print("=" * 60)
+    if validation['errors']:
+        print("Errors:")
+        for error in validation['errors']:
+            print(f"  ✗ {error}")
 
 
 def get_help() -> str:
