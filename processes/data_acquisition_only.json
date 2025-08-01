@@ -1,15 +1,15 @@
 {
   "process_info": {
-    "name": "Data Acquisition Only - Fail Fast",
-    "version": "1.0.0-failfast",
+    "name": "Data Acquisition Only - Enhanced",
+    "version": "2.0.0",
     "application_type": "data_acquisition",
-    "description": "Optimized data acquisition workflow for rapid development and testing. Includes satellite imagery, DEM data, and local files discovery with comprehensive validation.",
+    "description": "Enhanced data acquisition workflow with proper template variable handling. Includes satellite imagery, DEM data, and local files discovery with comprehensive validation.",
     "author": "Orchestrator Development Team",
-    "created_date": "2025-07-30T00:00:00Z",
-    "modified_date": "2025-07-30T00:00:00Z",
+    "created_date": "2025-08-01T00:00:00Z",
+    "modified_date": "2025-08-01T00:00:00Z",
     "tags": [
       "data_acquisition",
-      "fail_fast",
+      "enhanced",
       "development",
       "testing",
       "satellite",
@@ -25,57 +25,49 @@
     },
     "compatibility": {
       "python_version": ">=3.8",
-      "orchestrator_version": ">=1.0.0",
-      "fail_fast_compatible": true
+      "orchestrator_version": ">=2.0.0",
+      "template_variables_version": "2.0.0"
     }
   },
 
   "global_config": {
-    "template_variables": {
-      "bbox": "{bbox}",
-      "start_date": "{start_date}",
-      "end_date": "{end_date}",
-      "area_name": "{area_name}",
-      "output_dir": "{output_dir}",
-      "local_data_path": "{local_data_path}"
-    },
-    "default_values": {
-      "bbox": [85.30, 27.60, 85.32, 27.62],
-      "start_date": "2023-06-01",
-      "end_date": "2023-06-07",
-      "area_name": "fail_fast_test",
-      "output_dir": "outputs/fail_fast_test/data_acquisition",
-      "local_data_path": "/tmp/test_data"
-    },
-    "output_directory": "outputs/{area_name}/data_acquisition",
-    "temp_directory": "temp/{area_name}",
+    "output_directory": "{area_output_dir}",
+    "temp_directory": "{area_temp_dir}",
+    "cache_directory": "{area_cache_dir}",
     "log_level": "INFO",
     "error_handling": {
       "strategy": "continue_on_error",
-      "retry_attempts": 1,
-      "retry_delay": 10,
+      "retry_attempts": 2,
+      "retry_delay": 15,
       "fallback_to_mock": true,
       "fail_fast_on_critical": false
     },
     "performance_optimization": {
       "enable_caching": true,
       "parallel_processing": false,
-      "max_workers": 1,
-      "timeout_buffer": 1.2,
+      "max_workers": 2,
+      "timeout_buffer": 1.5,
       "memory_efficient": true
     },
     "data_quality": {
       "validate_outputs": true,
       "check_spatial_bounds": true,
       "verify_temporal_coverage": true,
-      "quality_level": "basic"
+      "quality_level": "comprehensive",
+      "cloud_cover_threshold": "{cloud_cover_threshold}",
+      "quality_threshold": "{quality_threshold}"
     },
-    "testing": {
-      "fail_fast_mode": true,
-      "mock_data_enabled": true,
-      "validation_level": "basic",
-      "performance_monitoring": true,
-      "auto_cleanup": true
+    "spatial_config": {
+      "target_crs": "{crs}",
+      "target_resolution": "{resolution}",
+      "resampling_method": "bilinear",
+      "buffer_distance": "{buffer_distance}"
+    },
+    "file_management": {
+      "file_extension": "{file_extension}",
+      "compression": "lzw",
+      "create_overviews": true,
+      "cleanup_temp": true
     }
   },
 
@@ -84,149 +76,133 @@
       "id": "acquire_sentinel_data",
       "name": "Sentinel-2 Data Acquisition",
       "type": "sentinel_hub_acquisition",
-      "description": "Acquire Sentinel-2 optical imagery with fail-fast optimization",
+      "description": "Acquire Sentinel-2 multispectral imagery for the study area",
       "priority": 1,
       "hyperparameters": {
         "bbox": "{bbox}",
         "start_date": "{start_date}",
         "end_date": "{end_date}",
         "data_collection": "SENTINEL-2-L2A",
-        "resolution": 60,
-        "max_cloud_coverage": 50,
-        "bands": ["B02", "B03", "B04", "B08"],
-        "save_to_file": true,
+        "resolution": "{resolution}",
+        "max_cloud_coverage": "{cloud_cover_threshold}",
+        "bands": ["B02", "B03", "B04", "B05", "B06", "B07", "B08", "B08A", "B11", "B12"],
         "output_format": "GeoTIFF",
-        "crs": "EPSG:4326",
-        "compression": "LZW",
-        "use_mock_data": true,
-        "mock_data_config": {
-          "generate_if_unavailable": true,
-          "mock_file_size": "10MB",
-          "spatial_resolution": 60,
-          "temporal_coverage": "complete"
-        },
+        "crs": "{crs}",
+        "mosaicking_order": "mostRecent",
+        "upsampling": "BILINEAR",
+        "downsampling": "BILINEAR",
+        "save_metadata": true,
+        "cache_enabled": true,
+        "fallback_to_mock": true,
         "optimization": {
-          "quick_mode": true,
-          "cache_enabled": true,
-          "parallel_download": false
+          "reduce_resolution_for_speed": false,
+          "limit_time_range": false,
+          "max_tiles_per_request": 4
         }
       },
       "inputs": {},
       "outputs": {
-        "imagery_data": {
-          "key": "sentinel_imagery",
+        "sentinel_imagery": {
+          "key": "sentinel_data",
           "type": "raster",
           "description": "Sentinel-2 multispectral imagery",
-          "file_pattern": "sentinel_{area_name}_*.tif",
+          "file_pattern": "sentinel2_{date_range}_{bbox_str}{file_extension}",
           "required": true
         },
-        "metadata": {
+        "sentinel_metadata": {
           "key": "sentinel_metadata",
           "type": "json",
-          "description": "Imagery acquisition metadata",
-          "file_pattern": "sentinel_{area_name}_metadata.json",
+          "description": "Sentinel-2 acquisition metadata",
+          "file_pattern": "sentinel2_metadata_{area_name}.json",
           "required": true
-        },
-        "quality_report": {
-          "key": "sentinel_quality",
-          "type": "json",
-          "description": "Data quality assessment",
-          "file_pattern": "sentinel_{area_name}_quality.json",
-          "required": false
         }
       },
       "dependencies": [],
       "condition": null,
       "timeout": 300,
-      "retry_attempts": 1,
+      "retry_attempts": 2,
       "continue_on_failure": false,
-      "fallback": {
-        "strategy": "use_mock_data",
-        "mock_data_path": "mock_data/sentinel_sample.tif"
-      },
       "validation": {
         "spatial_bounds_check": true,
         "temporal_coverage_check": true,
-        "band_count_check": true,
-        "file_size_check": {
-          "min_size_mb": 1,
-          "max_size_mb": 100
-        }
+        "band_completeness_check": true,
+        "cloud_coverage_check": true
       }
     },
 
     {
       "id": "acquire_elevation_data",
-      "name": "DEM Data Acquisition",
+      "name": "Digital Elevation Model Acquisition",
       "type": "dem_acquisition",
-      "description": "Acquire digital elevation model with basic topographic derivatives",
-      "priority": 1,
+      "description": "Acquire DEM data and generate topographic derivatives",
+      "priority": 2,
       "hyperparameters": {
         "bbox": "{bbox}",
         "source": "SRTM",
-        "resolution": 90,
+        "resolution": 30,
+        "external_dem_path": "{local_data_path}/dem/external_dem{file_extension}",
         "generate_derivatives": true,
-        "derivatives": ["slope", "aspect"],
-        "void_fill": false,
-        "save_to_file": true,
+        "derivatives": ["slope", "aspect", "curvature", "hillshade"],
+        "void_fill": true,
         "output_format": "GeoTIFF",
-        "crs": "EPSG:4326",
-        "compression": "LZW",
-        "use_mock_data": true,
-        "mock_data_config": {
-          "generate_if_unavailable": true,
-          "elevation_range": [200, 8000],
-          "add_noise": false,
-          "spatial_resolution": 90
-        },
+        "crs": "{crs}",
+        "resampling_method": "bilinear",
+        "save_to_file": true,
+        "cache_enabled": true,
+        "fallback_to_mock": true,
         "optimization": {
-          "quick_mode": true,
-          "skip_void_fill": true,
-          "basic_derivatives_only": true
+          "basic_derivatives_only": false,
+          "skip_hillshade": false,
+          "compress_outputs": true
         }
       },
       "inputs": {},
       "outputs": {
-        "elevation_data": {
-          "key": "dem_elevation",
+        "dem_elevation": {
+          "key": "elevation_data",
           "type": "raster",
           "description": "Digital elevation model",
-          "file_pattern": "dem_{area_name}.tif",
+          "file_pattern": "dem_elevation_{bbox_str}{file_extension}",
           "required": true
         },
-        "topographic_derivatives": {
-          "key": "topo_derivatives",
-          "type": "raster_stack",
-          "description": "Basic topographic derivative layers",
-          "file_pattern": "{derivative}_{area_name}.tif",
+        "dem_slope": {
+          "key": "slope_data",
+          "type": "raster",
+          "description": "Slope in degrees",
+          "file_pattern": "dem_slope_{bbox_str}{file_extension}",
+          "required": true
+        },
+        "dem_aspect": {
+          "key": "aspect_data",
+          "type": "raster",
+          "description": "Aspect in degrees",
+          "file_pattern": "dem_aspect_{bbox_str}{file_extension}",
+          "required": true
+        },
+        "dem_curvature": {
+          "key": "curvature_data",
+          "type": "raster",
+          "description": "Surface curvature",  
+          "file_pattern": "dem_curvature_{bbox_str}{file_extension}",
           "required": false
         },
-        "metadata": {
+        "dem_metadata": {
           "key": "dem_metadata",
           "type": "json",
           "description": "DEM acquisition and processing metadata",
-          "file_pattern": "dem_{area_name}_metadata.json",
+          "file_pattern": "dem_metadata_{area_name}.json",
           "required": true
         }
       },
       "dependencies": [],
       "condition": null,
       "timeout": 240,
-      "retry_attempts": 1,
+      "retry_attempts": 2,
       "continue_on_failure": false,
-      "fallback": {
-        "strategy": "use_mock_data",
-        "mock_data_path": "mock_data/dem_sample.tif"
-      },
       "validation": {
-        "spatial_bounds_check": true,
-        "elevation_range_check": {
-          "min_elevation": -500,
-          "max_elevation": 9000
-        },
-        "nodata_percentage_check": {
-          "max_nodata_percent": 30
-        }
+        "elevation_range_check": true,
+        "derivative_completeness_check": true,
+        "void_fill_validation": true
       }
     },
 
@@ -234,52 +210,70 @@
       "id": "discover_local_files",
       "name": "Local Files Discovery",
       "type": "local_files_discovery",
-      "description": "Discover and validate local geospatial data files with mock generation",
-      "priority": 2,
+      "description": "Discover and catalog existing local data files",
+      "priority": 3,
       "hyperparameters": {
-        "base_path": "{local_data_path}",
-        "file_patterns": ["*.tif", "*.tiff", "*.shp", "*.gpkg", "*.geojson"],
-        "recursive": true,
-        "validate_files": true,
-        "load_metadata": true,
-        "generate_mock_if_empty": true,
-        "mock_file_count": 3,
-        "mock_file_config": {
-          "raster_files": 2,
-          "vector_files": 1,
-          "file_size_range": ["1MB", "5MB"],
-          "spatial_extent": "{bbox}",
-          "create_associated_files": true
-        },
-        "validation_config": {
-          "check_spatial_reference": true,
-          "check_file_integrity": true,
-          "check_spatial_bounds": true,
-          "quick_validation": true
+        "search_paths": [
+          "{local_data_path}",
+          "{local_data_path}/vector",
+          "{local_data_path}/raster",
+          "{local_data_path}/inventory",
+          "{area_output_dir}/previous_runs"
+        ],
+        "file_patterns": [
+          "*.tif",
+          "*.tiff", 
+          "*.shp",
+          "*.geojson",
+          "*.gpkg",
+          "*.csv",
+          "*.json"
+        ],
+        "recursive_search": true,
+        "include_metadata": true,
+        "validate_spatial_files": true,
+        "check_file_integrity": true,
+        "generate_thumbnails": false,
+        "max_search_depth": 3,
+        "exclude_patterns": [
+          "*.tmp",
+          "*.lock",
+          "*cache*",
+          "*temp*"
+        ],
+        "inventory_file_paths": [
+          "{local_data_path}/inventory/landslide_inventory.shp",
+          "{local_data_path}/inventory/mineral_deposits.shp",
+          "{local_data_path}/inventory/training_data.geojson"
+        ],
+        "optimization": {
+          "skip_thumbnails": true,
+          "basic_validation_only": false,
+          "parallel_processing": false
         }
       },
       "inputs": {},
       "outputs": {
-        "local_files": {
-          "key": "discovered_files",
-          "type": "file_list",
-          "description": "List of discovered and validated local files",
-          "file_pattern": "local_*.*",
-          "required": false
-        },
-        "file_inventory": {
-          "key": "file_inventory",
+        "local_files_catalog": {
+          "key": "local_files",
           "type": "json",
-          "description": "Comprehensive inventory of discovered files",
-          "file_pattern": "local_files_inventory_{area_name}.json",
+          "description": "Catalog of discovered local files",
+          "file_pattern": "local_files_catalog_{area_name}.json",
           "required": true
         },
-        "validation_report": {
-          "key": "file_validation",
-          "type": "json",
-          "description": "File validation results and quality metrics",
-          "file_pattern": "local_files_validation_{area_name}.json",
+        "inventory_files": {
+          "key": "inventory_data",
+          "type": "mixed",
+          "description": "Discovered inventory/training data files",
+          "file_pattern": "inventory_summary_{area_name}.json",
           "required": false
+        },
+        "spatial_files_index": {
+          "key": "spatial_index",
+          "type": "json",
+          "description": "Spatial index of discovered geospatial files",
+          "file_pattern": "spatial_index_{area_name}.json",
+          "required": true
         }
       },
       "dependencies": [],
@@ -287,81 +281,80 @@
       "timeout": 120,
       "retry_attempts": 1,
       "continue_on_failure": true,
-      "fallback": {
-        "strategy": "generate_mock_files",
-        "mock_file_count": 3
-      },
       "validation": {
-        "min_files_found": 0,
-        "max_files_processed": 20,
-        "file_size_limits": {
-          "min_size_bytes": 1024,
-          "max_size_mb": 100
-        }
+        "file_existence_check": true,
+        "spatial_validity_check": true,
+        "catalog_completeness_check": true
       }
     },
 
     {
       "id": "calculate_basic_indices",
       "name": "Basic Spectral Indices Calculation",
-      "type": "spectral_indices_calculation",
-      "description": "Calculate essential vegetation and water indices for rapid analysis",
-      "priority": 3,
+      "type": "spectral_indices_extraction",
+      "description": "Calculate basic spectral indices from acquired imagery",
+      "priority": 4,
       "hyperparameters": {
-        "indices": ["NDVI", "NDWI"],
-        "save_individual_indices": true,
-        "create_indices_stack": true,
+        "indices": [
+          "NDVI",
+          "NDWI", 
+          "NDBI",
+          "SAVI",
+          "EVI"
+        ],
         "output_format": "GeoTIFF",
-        "compression": "LZW",
+        "rescale_factor": 10000,
         "nodata_value": -9999,
-        "data_type": "float32",
+        "calculate_statistics": true,
+        "generate_color_tables": false,
+        "clip_to_bbox": true,
         "optimization": {
           "memory_efficient": true,
           "chunk_processing": true,
-          "basic_indices_only": true
+          "compress_outputs": true
         }
       },
       "inputs": {
-        "optical_data": {
+        "imagery_data": {
           "source": "acquire_sentinel_data",
-          "key": "imagery_data",
+          "key": "sentinel_data",
           "required": true
         }
       },
       "outputs": {
-        "spectral_indices": {
-          "key": "calculated_indices",
-          "type": "raster_stack",
-          "description": "Calculated spectral indices",
-          "file_pattern": "{index}_{area_name}.tif",
+        "ndvi_index": {
+          "key": "ndvi_data",
+          "type": "raster",
+          "description": "Normalized Difference Vegetation Index",
+          "file_pattern": "ndvi_{date_range}_{bbox_str}{file_extension}",
           "required": true
         },
-        "indices_stack": {
-          "key": "indices_stack",
+        "ndwi_index": {
+          "key": "ndwi_data", 
           "type": "raster",
-          "description": "Combined indices stack",
-          "file_pattern": "indices_stack_{area_name}.tif",
-          "required": false
+          "description": "Normalized Difference Water Index",
+          "file_pattern": "ndwi_{date_range}_{bbox_str}{file_extension}",
+          "required": true
         },
-        "statistics": {
-          "key": "indices_statistics",
+        "indices_metadata": {
+          "key": "indices_metadata",
           "type": "json",
-          "description": "Statistical summary of calculated indices",
-          "file_pattern": "indices_stats_{area_name}.json",
-          "required": false
+          "description": "Spectral indices calculation metadata",
+          "file_pattern": "indices_metadata_{area_name}.json", 
+          "required": true
         }
       },
-      "dependencies": ["acquire_sentinel_data"],
+      "dependencies": [
+        "acquire_sentinel_data"
+      ],
       "condition": null,
       "timeout": 180,
       "retry_attempts": 1,
-      "continue_on_failure": true,
+      "continue_on_failure": false,
       "validation": {
-        "index_range_check": {
-          "NDVI": {"min": -1.0, "max": 1.0},
-          "NDWI": {"min": -1.0, "max": 1.0}
-        },
-        "statistics_check": true
+        "index_range_check": true,
+        "statistics_validation": true,
+        "output_completeness_check": true
       }
     },
 
@@ -369,54 +362,49 @@
       "id": "validate_acquisition",
       "name": "Data Acquisition Validation",
       "type": "data_validation",
-      "description": "Comprehensive validation of all acquired data with quality assessment",
-      "priority": 4,
+      "description": "Comprehensive validation of all acquired data",
+      "priority": 5,
       "hyperparameters": {
         "validation_checks": [
-          "spatial_bounds_match",
-          "temporal_coverage_adequate",
-          "data_quality_acceptable",
-          "file_integrity_verified",
-          "metadata_complete"
+          "spatial_coverage",
+          "temporal_coverage", 
+          "data_completeness",
+          "format_consistency",
+          "coordinate_system",
+          "resolution_consistency",
+          "data_quality_metrics"
         ],
         "quality_thresholds": {
-          "min_valid_pixels_percent": 70,
-          "max_cloud_coverage_percent": 60,
-          "spatial_accuracy_tolerance": 0.2,
-          "temporal_coverage_threshold": 0.8,
-          "completeness_threshold": 0.8
+          "spatial_coverage_min": 0.95,
+          "temporal_coverage_min": 0.8,
+          "data_completeness_min": 0.9,
+          "cloud_cover_max": "{cloud_cover_threshold}",
+          "nodata_percentage_max": 0.1
         },
         "generate_report": true,
-        "save_validation_results": true,
-        "create_summary": true,
-        "validation_level": "basic",
-        "fail_on_critical_errors": false
+        "create_visualizations": false,
+        "export_quality_metrics": true,
+        "fail_on_quality_issues": false,
+        "optimization": {
+          "skip_visualizations": true,
+          "basic_checks_only": false,
+          "parallel_validation": false
+        }
       },
       "inputs": {
-        "imagery_data": {
-          "source": "acquire_sentinel_data",
-          "key": "imagery_data",
-          "required": true
-        },
-        "elevation_data": {
-          "source": "acquire_elevation_data",
-          "key": "elevation_data",
-          "required": true
-        },
-        "local_files": {
-          "source": "discover_local_files",
-          "key": "local_files",
-          "required": false
-        },
-        "spectral_indices": {
-          "source": "calculate_basic_indices",
-          "key": "spectral_indices",
-          "required": false
+        "all_data": {
+          "sources": [
+            "acquire_sentinel_data",
+            "acquire_elevation_data", 
+            "discover_local_files",
+            "calculate_basic_indices"
+          ],
+          "aggregate": true
         }
       },
       "outputs": {
         "validation_report": {
-          "key": "validation_results",
+          "key": "validation_report",
           "type": "json",
           "description": "Comprehensive data quality validation report",
           "file_pattern": "validation_report_{area_name}.json",
@@ -458,7 +446,7 @@
       "name": "Data Inventory Generation",
       "type": "inventory_generation",
       "description": "Generate comprehensive inventory and catalog of all acquired data",
-      "priority": 5,
+      "priority": 6,
       "hyperparameters": {
         "include_statistics": true,
         "include_spatial_index": true,
@@ -467,6 +455,8 @@
         "output_format": "json",
         "create_catalog": true,
         "include_processing_history": true,
+        "catalog_format": "STAC",
+        "coordinate_precision": 6,
         "optimization": {
           "skip_previews": true,
           "basic_statistics": true,
@@ -529,15 +519,43 @@
 
   "metadata": {
     "process_type": "data_acquisition_only",
-    "complexity_level": "basic",
-    "testing_purpose": true,
-    "fail_fast_compatible": true,
-    "mock_data_supported": true,
-    "estimated_data_volume": "50MB-200MB",
-    "coordinate_systems": ["EPSG:4326"],
+    "complexity_level": "intermediate",
+    "template_variables_used": [
+      "bbox",
+      "start_date", 
+      "end_date",
+      "area_name",
+      "local_data_path",
+      "output_dir",
+      "temp_dir",
+      "cache_dir",
+      "area_output_dir",
+      "area_temp_dir",
+      "area_cache_dir",
+      "file_extension",
+      "resolution",
+      "crs",
+      "cloud_cover_threshold",
+      "quality_threshold",
+      "buffer_distance",
+      "date_range",
+      "bbox_str"
+    ],
+    "template_variables_required": [
+      "bbox",
+      "area_name"
+    ],
+    "template_variables_optional": [
+      "start_date",
+      "end_date", 
+      "local_data_path",
+      "output_dir"
+    ],
+    "estimated_data_volume": "100MB-500MB",
+    "coordinate_systems": ["EPSG:4326", "EPSG:3857"],
     "data_sources": [
       "Sentinel-2",
-      "SRTM",
+      "SRTM", 
       "Local Files"
     ],
     "output_formats": ["GeoTIFF", "JSON"],
@@ -550,100 +568,45 @@
       "inventory_generation"
     ],
     "optimization_features": [
-      "reduced_resolution_for_speed",
-      "limited_time_range",
-      "mock_data_fallbacks",
-      "basic_validation_only",
+      "caching_enabled",
       "memory_efficient_processing",
-      "parallel_disabled_for_simplicity"
+      "error_recovery",
+      "mock_data_fallbacks",
+      "comprehensive_validation",
+      "performance_monitoring"
     ],
     "development_notes": {
-      "version": "fail-fast-optimized",
-      "target_execution_time": "under_10_minutes",
+      "version": "enhanced-template-variables",
+      "target_execution_time": "5-10 minutes",
       "resource_limits": "512MB_RAM_500MB_disk",
       "test_coverage": "comprehensive_data_acquisition",
-      "validation_level": "basic_functional",
-      "mock_data_strategy": "automatic_fallback",
-      "error_handling": "continue_with_warnings"
+      "validation_level": "comprehensive",
+      "template_handling": "enhanced_with_defaults",
+      "error_handling": "robust_with_fallbacks"
     },
     "usage_scenarios": [
-      "rapid_development_testing",
-      "ci_cd_pipeline_validation",
-      "development_environment_setup",
-      "algorithm_prototyping",
-      "data_availability_testing"
+      "development_testing",
+      "pipeline_validation",
+      "data_acquisition_benchmarking",
+      "template_variable_testing",
+      "error_handling_validation",
+      "performance_optimization_testing"
     ],
-    "performance_benchmarks": {
-      "target_execution_time_seconds": 600,
-      "max_memory_usage_mb": 512,
-      "max_disk_usage_mb": 500,
-      "network_timeout_seconds": 300,
-      "step_timeout_seconds": 300
-    },
-    "quality_expectations": {
-      "data_completeness": "basic",
-      "spatial_accuracy": "acceptable",
-      "temporal_accuracy": "adequate",
-      "processing_quality": "development_grade",
-      "validation_thoroughness": "basic"
-    }
-  },
-
-  "execution_profile": {
-    "recommended_environment": {
-      "python_version": "3.8+",
-      "memory_gb": 1,
-      "disk_space_gb": 1,
-      "cpu_cores": 2,
-      "network_bandwidth": "broadband"
-    },
-    "execution_order": [
-      "acquire_sentinel_data",
-      "acquire_elevation_data",
-      "discover_local_files",
-      "calculate_basic_indices",
-      "validate_acquisition",
-      "generate_data_inventory"
-    ],
-    "parallel_execution": {
-      "enabled": false,
-      "parallel_groups": [
-        ["acquire_sentinel_data", "acquire_elevation_data"],
-        ["discover_local_files"],
-        ["calculate_basic_indices"],
-        ["validate_acquisition"],
-        ["generate_data_inventory"]
+    "dependencies": {
+      "external_apis": [
+        "Sentinel Hub API (optional with mock fallback)"
+      ],
+      "python_packages": [
+        "rasterio",
+        "geopandas",
+        "sentinelhub",
+        "numpy",
+        "gdal"
+      ],
+      "system_requirements": [
+        "internet_connection_optional",
+        "local_storage_500MB"
       ]
-    },
-    "optimization_settings": {
-      "cache_intermediate_results": true,
-      "use_mock_data_when_possible": true,
-      "skip_expensive_validations": true,
-      "memory_efficient_processing": true,
-      "fast_fail_on_errors": false
-    }
-  },
-
-  "validation_schema": {
-    "version": "1.0.0",
-    "required_sections": [
-      "process_info",
-      "global_config",
-      "steps",
-      "metadata"
-    ],
-    "step_validation": {
-      "required_fields": ["id", "name", "type", "description", "outputs"],
-      "optional_fields": ["inputs", "dependencies", "condition", "timeout"],
-      "output_validation": {
-        "required_output_fields": ["key", "type", "description"],
-        "supported_output_types": ["raster", "vector", "json", "file_list", "raster_stack"]
-      }
-    },
-    "dependency_validation": {
-      "check_circular_dependencies": true,
-      "validate_step_references": true,
-      "check_input_output_compatibility": true
     }
   }
 }
