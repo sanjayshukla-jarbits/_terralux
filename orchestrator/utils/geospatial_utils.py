@@ -564,11 +564,75 @@ def create_buffer_geometry(geometry_or_point: Union[Tuple[float, float], Any],
     logger.debug(f"Created buffer with distance {buffer_distance}")
     return buffered
 
+def reproject_raster(src_raster, target_crs, dst_path=None):
+    """Reproject raster to target CRS."""
+    from rasterio.warp import calculate_default_transform, reproject, Resampling
+    import rasterio
+    
+    with rasterio.open(src_raster) as src:
+        transform, width, height = calculate_default_transform(
+            src.crs, target_crs, src.width, src.height, *src.bounds
+        )
+        
+        kwargs = src.meta.copy()
+        kwargs.update({
+            'crs': target_crs,
+            'transform': transform,
+            'width': width,
+            'height': height
+        })
+        
+        if dst_path:
+            with rasterio.open(dst_path, 'w', **kwargs) as dst:
+                for i in range(1, src.count + 1):
+                    reproject(
+                        source=rasterio.band(src, i),
+                        destination=rasterio.band(dst, i),
+                        src_transform=src.transform,
+                        src_crs=src.crs,
+                        dst_transform=transform,
+                        dst_crs=target_crs,
+                        resampling=Resampling.nearest
+                    )
+            return dst_path
+        else:
+            # Return reprojected array and metadata
+            reprojected = np.zeros((height, width, src.count))
+            for i in range(1, src.count + 1):
+                reproject(
+                    source=rasterio.band(src, i),
+                    destination=reprojected[:, :, i-1],
+                    src_transform=src.transform,
+                    src_crs=src.crs,
+                    dst_transform=transform,
+                    dst_crs=target_crs,
+                    resampling=Resampling.nearest
+                )
+            return reprojected, kwargs
+
+def estimate_utm_crs(bbox):
+    """Estimate UTM CRS from bounding box."""
+    from pyproj import CRS
+    
+    # Calculate center longitude
+    center_lon = (bbox[0] + bbox[2]) / 2
+    
+    # Determine UTM zone
+    utm_zone = int((center_lon + 180) / 6) + 1
+    
+    # Determine hemisphere
+    center_lat = (bbox[1] + bbox[3]) / 2
+    hemisphere = 'north' if center_lat >= 0 else 'south'
+    
+    # Create UTM CRS
+    utm_crs = CRS.from_string(f"+proj=utm +zone={utm_zone} +{hemisphere} +datum=WGS84")
+    
+    return utm_crs
 
 # Export main functions
 __all__ = [
     'get_raster_info', 'calculate_bbox_area', 'reproject_bbox',
     'validate_crs', 'get_raster_bounds', 'calculate_pixel_size',
     'clip_raster_to_bbox', 'merge_raster_files', 'calculate_distance',
-    'create_buffer_geometry'
+    'create_buffer_geometry', 'reproject_raster', 'estimate_utm_crs'
 ]
