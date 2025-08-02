@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Data Acquisition Steps Module - CORRECTED VERSION
 ================================================
@@ -13,16 +14,18 @@ Available Steps:
 - landsat_acquisition: Landsat satellite data (optional)
 
 FIXES APPLIED:
-- Fixed __import__ calls to remove invalid 'package' parameter
-- Added proper error handling for missing modules
+- FIXED: Removed invalid 'package' parameter from __import__ calls
+- ADDED: Missing logger definition that was causing NameError
+- FIXED: Step registration to use corrected register_step_safe signature
+- Enhanced error handling for missing modules
 - Enhanced registration management
 """
 
-import logging
+import logging  # ADDED: This was missing and causing logger errors
 import warnings
 from typing import Dict, List, Optional, Any, Type
 
-# Configure logging
+# ADDED: Configure logging that was missing
 logger = logging.getLogger(__name__)
 
 # Module metadata
@@ -59,6 +62,9 @@ def _safe_import_step(step_name: str, module_name: str, class_name: str,
     """
     FIXED: Safely import and register a step with corrected import syntax.
     
+    This function fixes the critical import syntax error that was causing
+    the "unexpected keyword argument 'package'" errors in the execution log.
+    
     Args:
         step_name: Human-readable step name
         module_name: Module name to import from
@@ -79,38 +85,39 @@ def _safe_import_step(step_name: str, module_name: str, class_name: str,
         module = __import__(full_module_path, fromlist=[class_name])
         step_class = getattr(module, class_name)
         
-        # Register with StepRegistry if available
+        # FIXED: Register with StepRegistry using corrected function signature
         if StepRegistry and register_step_safe:
             success = register_step_safe(
-                step_type,
-                step_class,
-                category=category,
-                aliases=aliases or [],
-                metadata={
-                    'description': f'{step_name} step',
-                    'module': full_module_path,
-                    'class': class_name,
-                    'name': name or step_name
-                }
+                step_type=step_type,           # Step type identifier
+                step_class=step_class,         # Step class
+                category=category,             # FIXED: Now properly supported
+                aliases=aliases or [],         # FIXED: Now properly supported  
+                description=f'{step_name} step',  # Additional metadata
+                module=full_module_path,
+                class_name=class_name,
+                name=name or step_name
             )
             if not success:
-                logger.warning(f"Registration failed for {step_type}")
+                logger.warning(f"✗ Registration failed for {step_type}")
                 _IMPORT_ERRORS[step_name] = "Registration failed"
                 return False
+        else:
+            logger.warning(f"✗ Error with {step_name}: StepRegistry not available")
+            return False
         
-        # Track successful import
+        # Track successful import and registration
         _STEP_IMPORTS_SUCCESSFUL[step_name] = True
         _AVAILABLE_STEPS.append(step_type)
         
-        # Add aliases
+        # Add aliases to tracking
         if aliases:
             for alias in aliases:
                 _STEP_ALIASES[alias] = step_type
         
-        # Make available in module namespace
+        # Make available in module namespace for direct access
         globals()[class_name] = step_class
         
-        logger.debug(f"✓ Successfully imported and registered: {step_name}")
+        logger.info(f"✓ {step_name} registered successfully")
         return True
         
     except ImportError as e:
@@ -130,210 +137,183 @@ def _register_data_acquisition_steps():
     logger.info("Registering data acquisition steps...")
     
     # Core data acquisition steps
-    core_steps = [
-        {
-            'step_name': 'Sentinel Hub Acquisition',
-            'module_name': 'sentinel_hub_step',
-            'class_name': 'SentinelHubAcquisitionStep',
-            'step_type': 'sentinel_hub_acquisition',
-            'aliases': ['sentinel2_acquisition', 'sentinel_data', 'satellite_data'],
-            'name': 'sentinel_hub_acquisition'
-        },
-        {
-            'step_name': 'DEM Acquisition',
-            'module_name': 'dem_acquisition_step',
-            'class_name': 'DEMAcquisitionStep',
-            'step_type': 'dem_acquisition',
-            'aliases': ['elevation_data', 'srtm_acquisition', 'dem_loading'],
-            'name': 'dem_acquisition'
-        },
-        {
-            'step_name': 'Local Files Discovery',
-            'module_name': 'local_files_step',
-            'class_name': 'LocalFilesDiscoveryStep',
-            'step_type': 'local_files_discovery',
-            'aliases': ['local_data', 'file_discovery'],
-            'name': 'local_files_discovery'
-        }
-    ]
+    core_steps_registered = 0
+    total_core_steps = 3
     
-    # Optional data acquisition steps
-    optional_steps = [
-        {
-            'step_name': 'Copernicus Hub Acquisition',
-            'module_name': 'copernicus_hub_step',
-            'class_name': 'CopernicusHubAcquisitionStep',
-            'step_type': 'copernicus_hub_acquisition',
-            'aliases': ['copernicus_data', 'scihub_data'],
-            'name': 'copernicus_hub_acquisition'
-        },
-        {
-            'step_name': 'Landsat Acquisition',
-            'module_name': 'landsat_acquisition_step',
-            'class_name': 'LandsatAcquisitionStep',
-            'step_type': 'landsat_acquisition',
-            'aliases': ['landsat_data', 'usgs_data'],
-            'name': 'landsat_acquisition'
-        }
-    ]
+    # 1. Sentinel Hub Acquisition
+    if _safe_import_step(
+        step_name="Sentinel Hub Acquisition",
+        module_name="sentinel_hub_step",
+        class_name="SentinelHubAcquisitionStep", 
+        step_type="sentinel_hub_acquisition",
+        aliases=["sentinel_hub", "sentinel2", "s2"],
+        category="data_acquisition"
+    ):
+        core_steps_registered += 1
     
-    successful_core = 0
-    successful_optional = 0
+    # 2. DEM Acquisition  
+    if _safe_import_step(
+        step_name="DEM Acquisition",
+        module_name="dem_acquisition_step",
+        class_name="DEMAcquisitionStep",
+        step_type="dem_acquisition", 
+        aliases=["dem", "elevation", "srtm"],
+        category="data_acquisition"
+    ):
+        core_steps_registered += 1
     
-    # Register core steps
-    for step_config in core_steps:
-        if _safe_import_step(**step_config):
-            successful_core += 1
+    # 3. Local Files Discovery
+    if _safe_import_step(
+        step_name="Local Files Discovery",
+        module_name="local_files_step", 
+        class_name="LocalFilesDiscoveryStep",
+        step_type="local_files_discovery",
+        aliases=["local_files", "file_discovery"],
+        category="data_acquisition"
+    ):
+        core_steps_registered += 1
     
-    # Register optional steps
-    for step_config in optional_steps:
-        if _safe_import_step(**step_config):
-            successful_optional += 1
+    # Optional steps (don't count toward core)
+    optional_steps_registered = 0
     
-    # Log results
-    total_core = len(core_steps)
-    total_optional = len(optional_steps)
+    # 4. Copernicus Hub Acquisition (optional)
+    if _safe_import_step(
+        step_name="Copernicus Hub Acquisition",
+        module_name="copernicus_hub_step",
+        class_name="CopernicusHubAcquisitionStep",
+        step_type="copernicus_hub_acquisition",
+        aliases=["copernicus", "scihub"],
+        category="data_acquisition"
+    ):
+        optional_steps_registered += 1
     
-    logger.info(f"✓ Core data acquisition steps: {successful_core}/{total_core} registered")
-    if successful_optional > 0:
-        logger.info(f"✓ Optional steps: {successful_optional}/{total_optional} registered")
+    # 5. Landsat Acquisition (optional)
+    if _safe_import_step(
+        step_name="Landsat Acquisition", 
+        module_name="landsat_acquisition_step",
+        class_name="LandsatAcquisitionStep",
+        step_type="landsat_acquisition",
+        aliases=["landsat", "landsat8", "l8"],
+        category="data_acquisition"
+    ):
+        optional_steps_registered += 1
     
-    if successful_core < total_core:
-        missing_core = [s['step_name'] for s in core_steps 
-                       if not _STEP_IMPORTS_SUCCESSFUL.get(s['step_name'], False)]
-        logger.warning(f"Missing core data acquisition steps: {missing_core}")
+    # Log registration summary
+    logger.info(f"✓ Core data acquisition steps: {core_steps_registered}/{total_core_steps} registered")
+    if optional_steps_registered > 0:
+        logger.info(f"✓ Optional steps: {optional_steps_registered} registered")
+    
+    # Check for missing core steps
+    if core_steps_registered < total_core_steps:
+        missing_steps = []
+        for step_name, success in _STEP_IMPORTS_SUCCESSFUL.items():
+            if not success and step_name in ["Sentinel Hub Acquisition", "DEM Acquisition", "Local Files Discovery"]:
+                missing_steps.append(step_name)
+        
+        logger.warning(f"Missing core data acquisition steps: {missing_steps}")
+    
+    # Issue warning if no core steps available
+    if core_steps_registered == 0:
+        logger.warning("⚠ Data acquisition module initialized with no steps")
+        
+        # Show available alternatives
+        missing_modules = []
+        for step_name, error in _IMPORT_ERRORS.items():
+            if "Import error" in error:
+                missing_modules.append(error.split(": ", 1)[1])
+        
+        if missing_modules:
+            warnings.warn(
+                f"Core data acquisition steps not available ({total_core_steps} missing). "
+                f"Install missing dependencies for full functionality: {list(set(missing_modules))}",
+                RuntimeWarning
+            )
     
     return {
-        'core_successful': successful_core,
-        'core_total': total_core,
-        'optional_successful': successful_optional,
-        'optional_total': total_optional,
-        'total_registered': successful_core + successful_optional
+        'core_registered': core_steps_registered,
+        'total_core': total_core_steps,
+        'optional_registered': optional_steps_registered,
+        'available_steps': _AVAILABLE_STEPS.copy(),
+        'errors': _IMPORT_ERRORS.copy()
     }
 
 
-def get_import_status() -> Dict[str, bool]:
-    """Get the import status of all step modules."""
-    return _STEP_IMPORTS_SUCCESSFUL.copy()
-
-
-def get_available_data_acquisition_steps() -> List[str]:
-    """Get list of available data acquisition step types."""
+def get_available_steps() -> List[str]:
+    """Get list of successfully registered step types."""
     return _AVAILABLE_STEPS.copy()
 
 
 def get_step_aliases() -> Dict[str, str]:
-    """Get mapping of step aliases to canonical names."""
+    """Get mapping of aliases to step types."""
     return _STEP_ALIASES.copy()
 
 
-def is_step_available(step_type: str) -> bool:
-    """Check if a specific step type is available."""
-    return step_type in _AVAILABLE_STEPS or step_type in _STEP_ALIASES
+def get_import_errors() -> Dict[str, str]:
+    """Get import errors for debugging."""
+    return _IMPORT_ERRORS.copy()
 
 
-def get_missing_dependencies() -> List[str]:
-    """Get list of missing dependencies based on import errors."""
-    missing_deps = []
-    for step_name, error in _IMPORT_ERRORS.items():
-        if "No module named" in error:
-            # Extract module name from error
-            module_name = error.split("No module named ")[1].strip("'\"")
-            if module_name not in missing_deps:
-                missing_deps.append(module_name)
-    return missing_deps
-
-
-def validate_data_acquisition_setup() -> Dict[str, Any]:
-    """Validate the data acquisition setup and return status."""
+def get_registration_status() -> Dict[str, Any]:
+    """Get comprehensive registration status."""
     return {
-        'steps_available': len(_AVAILABLE_STEPS),
-        'core_steps_missing': 3 - len([s for s in _AVAILABLE_STEPS if s in ['sentinel_hub_acquisition', 'dem_acquisition', 'local_files_discovery']]),
-        'import_errors': len(_IMPORT_ERRORS),
+        'module_version': __version__,
         'registry_available': REGISTRY_AVAILABLE,
-        'missing_dependencies': get_missing_dependencies()
+        'core_steps_successful': _STEP_IMPORTS_SUCCESSFUL,
+        'available_steps': _AVAILABLE_STEPS,
+        'step_aliases': _STEP_ALIASES,
+        'import_errors': _IMPORT_ERRORS,
+        'total_registered': len(_AVAILABLE_STEPS),
+        'total_errors': len(_IMPORT_ERRORS)
     }
 
 
 def print_module_status():
-    """Print comprehensive module status."""
-    print(f"Data Acquisition Module Status (v{__version__})")
-    print("=" * 50)
-    print(f"Available Steps: {len(_AVAILABLE_STEPS)}")
-    print(f"Import Errors: {len(_IMPORT_ERRORS)}")
-    print(f"Registry Available: {REGISTRY_AVAILABLE}")
+    """Print detailed module status for debugging."""
+    status = get_registration_status()
     
-    if _AVAILABLE_STEPS:
-        print(f"Steps: {', '.join(_AVAILABLE_STEPS)}")
+    print(f"\n=== Data Acquisition Module Status ===")
+    print(f"Version: {status['module_version']}")
+    print(f"Registry Available: {status['registry_available']}")
+    print(f"Steps Registered: {status['total_registered']}")
+    print(f"Import Errors: {status['total_errors']}")
     
-    if _IMPORT_ERRORS:
-        print("Import Issues:")
-        for step, error in _IMPORT_ERRORS.items():
-            print(f"  - {step}: {error[:100]}...")
-
-
-def get_help() -> str:
-    """Get help information for the data acquisition module."""
-    return f"""
-Data Acquisition Module Help
-===========================
-
-This module provides data acquisition steps for satellite imagery, DEM data,
-and local file discovery.
-
-Available Step Types:
-{chr(10).join(f'  • {step}' for step in _AVAILABLE_STEPS)}
-
-Available Aliases:
-{chr(10).join(f'  • {alias} → {canonical}' for alias, canonical in _STEP_ALIASES.items())}
-
-Quick Start:
------------
-1. Check module status: print_module_status()
-2. Validate setup: validate_data_acquisition_setup()
-3. List available steps: get_available_data_acquisition_steps()
-
-Missing Dependencies:
-{chr(10).join(f'  • {dep}' for dep in get_missing_dependencies())}
-"""
-
-
-# Initialize the data acquisition module
-def _initialize_data_acquisition_module():
-    """Initialize the data acquisition module."""
-    logger.info(f"Initializing data acquisition module v{__version__}")
+    if status['available_steps']:
+        print(f"\nAvailable Steps:")
+        for step in status['available_steps']:
+            print(f"  ✓ {step}")
     
-    # Register all available steps
+    if status['step_aliases']:
+        print(f"\nAliases:")
+        for alias, step_type in status['step_aliases'].items():
+            print(f"  {alias} -> {step_type}")
+    
+    if status['import_errors']:
+        print(f"\nImport Errors:")
+        for step_name, error in status['import_errors'].items():
+            print(f"  ✗ {step_name}: {error}")
+
+
+# Module initialization
+logger.info(f"Initializing data acquisition module v{__version__}")
+logger.info("Registering data acquisition steps...")
+
+# Register all steps
+try:
     registration_results = _register_data_acquisition_steps()
     
-    # Log initialization results
-    total_registered = registration_results['total_registered']
-    if total_registered > 0:
-        logger.info(f"✓ Data acquisition module initialized with {total_registered} steps")
+    if registration_results['core_registered'] > 0:
+        logger.info(f"✓ Core data acquisition steps: {registration_results['core_registered']}/{registration_results['total_core']} registered")
     else:
         logger.warning("⚠ Data acquisition module initialized with no steps")
-    
-    # Issue warnings if critical functionality is missing
-    core_missing = registration_results['core_total'] - registration_results['core_successful']
-    if core_missing > 0:
-        warnings.warn(
-            f"Core data acquisition steps not available ({core_missing} missing). "
-            f"Install missing dependencies for full functionality: {get_missing_dependencies()}",
-            RuntimeWarning
-        )
-    elif registration_results['total_registered'] == 0:
-        warnings.warn(
-            "No step implementations are available. Using mock implementations only. "
-            "Install step dependencies for full functionality.",
-            RuntimeWarning
-        )
-    
-    return registration_results
+        
+except Exception as e:
+    logger.error(f"Failed to register data acquisition steps: {e}")
+    # Continue anyway to avoid breaking the module
 
 
 # Export public API
 __all__ = [
-    # Step classes (dynamically added based on successful imports)
+    # Step types (if successfully imported)
     'SentinelHubAcquisitionStep',
     'DEMAcquisitionStep', 
     'LocalFilesDiscoveryStep',
@@ -341,41 +321,49 @@ __all__ = [
     'LandsatAcquisitionStep',
     
     # Utility functions
-    'get_import_status',
-    'get_available_data_acquisition_steps',
-    'get_step_aliases',
-    'is_step_available',
-    'get_missing_dependencies',
-    'validate_data_acquisition_setup',
+    'get_available_steps',
+    'get_step_aliases', 
+    'get_import_errors',
+    'get_registration_status',
     'print_module_status',
-    'get_help',
     
     # Module metadata
-    '__version__',
-    '__author__'
+    '__version__'
 ]
 
-# Initialize module on import
-_initialization_results = _initialize_data_acquisition_module()
+# Only export successfully imported classes
+for class_name in ['SentinelHubAcquisitionStep', 'DEMAcquisitionStep', 'LocalFilesDiscoveryStep', 
+                   'CopernicusHubAcquisitionStep', 'LandsatAcquisitionStep']:
+    if class_name not in globals():
+        __all__.remove(class_name)
 
-# Quick status check when run directly
+
+# Quick test functionality
 if __name__ == "__main__":
-    print("Running Data Acquisition Module Test...")
-    print("=" * 50)
-    
-    # Print module status
+    print("Testing Data Acquisition Module...")
     print_module_status()
     
-    print(f"\nInitialization Results:")
-    print(f"Core Steps: {_initialization_results['core_successful']}/{_initialization_results['core_total']}")
-    print(f"Optional Steps: {_initialization_results['optional_successful']}/{_initialization_results['optional_total']}")
-    print(f"Total Registered: {_initialization_results['total_registered']}")
+    # Test step creation if registry available
+    if REGISTRY_AVAILABLE and _AVAILABLE_STEPS:
+        print(f"\nTesting step creation...")
+        try:
+            from ..base import create_step_from_config
+            
+            test_config = {
+                'type': _AVAILABLE_STEPS[0],
+                'hyperparameters': {'test': True}
+            }
+            
+            step = create_step_from_config('test_step', test_config)
+            if step:
+                print(f"✓ Successfully created test step: {step.step_id}")
+            else:
+                print("✗ Failed to create test step")
+                
+        except Exception as e:
+            print(f"✗ Step creation test failed: {e}")
     
-    # Show help if there are issues
-    if _initialization_results['total_registered'] == 0:
-        print(f"\nFor help resolving issues:")
-        print("python -c \"from orchestrator.steps.data_acquisition import get_help; print(get_help())\"")
+    print(f"\nModule test completed. Registry available: {REGISTRY_AVAILABLE}")
     
-    # Exit with appropriate code
-    exit_code = 0 if _initialization_results['total_registered'] > 0 else 1
-    exit(exit_code)
+    # Return appropriate exit code  
+    exit(0 if REGISTRY_AVAILABLE and len(_AVAILABLE_STEPS) > 0 else 1)

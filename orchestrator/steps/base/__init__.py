@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Steps Base Module - Foundation for Pipeline Step Implementation
 ==============================================================
@@ -16,6 +17,12 @@ Enhanced Features:
 - Import error handling and fallback mechanisms
 - Comprehensive validation and debugging
 - Module health monitoring
+
+FIXES APPLIED:
+- Enhanced register_step_safe() function with better error handling
+- Fixed import error handling for step_registry module
+- Added proper fallback mechanisms when components are not available
+- Improved error logging and debugging capabilities
 """
 
 import logging
@@ -28,7 +35,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # Version information
-__version__ = "2.0.0"
+__version__ = "2.0.0-fixed"
 
 # Core imports with fail-fast error handling
 _BASE_STEP_AVAILABLE = False
@@ -50,6 +57,14 @@ except ImportError as e:
 try:
     from .step_registry import StepRegistry, StepRegistrationError, register_step
     from .step_registry import get_available_step_types, create_step_from_config, is_step_type_available
+    # ADDED: Import register_step_safe from step_registry if available
+    try:
+        from .step_registry import register_step_safe as _registry_register_step_safe
+        _REGISTRY_REGISTER_STEP_SAFE_AVAILABLE = True
+    except ImportError:
+        _registry_register_step_safe = None
+        _REGISTRY_REGISTER_STEP_SAFE_AVAILABLE = False
+        
     _STEP_REGISTRY_AVAILABLE = True
     logger.debug("StepRegistry imported successfully")
 except ImportError as e:
@@ -60,6 +75,8 @@ except ImportError as e:
     get_available_step_types = None
     create_step_from_config = None
     is_step_type_available = None
+    _registry_register_step_safe = None
+    _REGISTRY_REGISTER_STEP_SAFE_AVAILABLE = False
 
 # Check if core functionality is available
 _CORE_AVAILABLE = _BASE_STEP_AVAILABLE and _STEP_REGISTRY_AVAILABLE
@@ -90,7 +107,8 @@ def get_component_status() -> Dict[str, bool]:
     return {
         'base_step': _BASE_STEP_AVAILABLE,
         'step_registry': _STEP_REGISTRY_AVAILABLE,
-        'core_available': _CORE_AVAILABLE
+        'core_available': _CORE_AVAILABLE,
+        'register_step_safe_from_registry': _REGISTRY_REGISTER_STEP_SAFE_AVAILABLE
     }
 
 
@@ -100,16 +118,23 @@ def get_missing_components() -> List[str]:
     return [name for name, available in status.items() if not available and name != 'core_available']
 
 
-# Enhanced registration functions
+# FIXED: Enhanced registration function with improved error handling
 def register_step_safe(step_type: str, 
                       step_class: Type['BaseStep'],
+                      category: Optional[str] = None,
+                      aliases: Optional[List[str]] = None,
                       **kwargs) -> bool:
     """
-    Safely register a step with comprehensive error handling and logging.
+    FIXED: Safely register a step with comprehensive error handling and logging.
+    
+    This function now properly handles the category parameter and provides
+    better error reporting and fallback mechanisms.
     
     Args:
         step_type: Step type identifier
-        step_class: Step class
+        step_class: Step class that inherits from BaseStep
+        category: Optional category for organization (FIXED: Added this parameter)
+        aliases: Optional list of aliases
         **kwargs: Additional registration parameters
         
     Returns:
@@ -122,6 +147,32 @@ def register_step_safe(step_type: str,
         return False
     
     try:
+        # FIXED: Use the register_step_safe from step_registry if available
+        if _REGISTRY_REGISTER_STEP_SAFE_AVAILABLE and _registry_register_step_safe:
+            logger.debug(f"Using step_registry.register_step_safe for {step_type}")
+            success = _registry_register_step_safe(
+                step_type=step_type,
+                step_class=step_class,
+                category=category,
+                aliases=aliases,
+                **kwargs
+            )
+            if success:
+                # Log successful registration
+                log_entry = {
+                    'step_type': step_type,
+                    'class_name': step_class.__name__,
+                    'module': step_class.__module__,
+                    'status': 'success',
+                    'method': 'registry_register_step_safe'
+                }
+                _REGISTRATION_LOG.append(log_entry)
+                logger.info(f"✓ Successfully registered step: {step_type} -> {step_class.__name__}")
+            return success
+        
+        # FALLBACK: Use StepRegistry.register directly
+        logger.debug(f"Using StepRegistry.register directly for {step_type}")
+        
         # Validate step class before registration
         if BaseStep and not issubclass(step_class, BaseStep):
             error_msg = f"Step class {step_class.__name__} must inherit from BaseStep"
@@ -129,15 +180,22 @@ def register_step_safe(step_type: str,
             _REGISTRATION_ERRORS[step_type] = error_msg
             return False
             
-        # Register with StepRegistry
-        StepRegistry.register(step_type, step_class, **kwargs)
+        # FIXED: Register with StepRegistry using corrected signature
+        StepRegistry.register(
+            step_type=step_type,
+            step_class=step_class,
+            category=category,  # FIXED: Now properly passed
+            aliases=aliases,    # FIXED: Now properly passed
+            **kwargs
+        )
         
         # Log successful registration
         log_entry = {
             'step_type': step_type,
             'class_name': step_class.__name__,
             'module': step_class.__module__,
-            'status': 'success'
+            'status': 'success',
+            'method': 'registry_register_direct'
         }
         _REGISTRATION_LOG.append(log_entry)
         
@@ -152,10 +210,11 @@ def register_step_safe(step_type: str,
         # Log failed registration
         log_entry = {
             'step_type': step_type,
-            'class_name': step_class.__name__,
-            'module': step_class.__module__,
+            'class_name': step_class.__name__ if step_class else 'Unknown',
+            'module': step_class.__module__ if step_class else 'Unknown',
             'status': 'failed',
-            'error': str(e)
+            'error': str(e),
+            'method': 'error'
         }
         _REGISTRATION_LOG.append(log_entry)
         
@@ -319,6 +378,7 @@ def print_registration_status():
     print(f"Core Available: {status['core_available']}")
     print(f"BaseStep Available: {status['component_status']['base_step']}")
     print(f"Registry Available: {status['component_status']['step_registry']}")
+    print(f"Registry register_step_safe: {status['component_status']['register_step_safe_from_registry']}")
     
     # Registered modules
     print(f"\nRegistered Modules ({len(status['registered_modules'])}):")
@@ -342,7 +402,8 @@ def print_registration_status():
         print(f"\nRecent Registrations ({len(status['registration_log'])}):")
         for entry in status['registration_log'][-10:]:  # Show last 10
             status_icon = "✓" if entry['status'] == 'success' else "✗"
-            print(f"  {status_icon} {entry['step_type']} -> {entry['class_name']}")
+            method = entry.get('method', 'unknown')
+            print(f"  {status_icon} {entry['step_type']} -> {entry['class_name']} [{method}]")
     
     print("=" * 60)
 
@@ -443,14 +504,12 @@ def _register_builtin_steps():
         # Register MockStep if available
         if MockStep:
             success = register_step_safe(
-                'mock',
-                MockStep,
+                step_type='mock',
+                step_class=MockStep,
                 category='testing',
                 aliases=['test', 'mock_step'],
-                metadata={
-                    'description': 'Mock step for testing and development',
-                    'builtin': True
-                }
+                description='Mock step for testing and development',
+                builtin=True
             )
             if success:
                 logger.debug("✓ Registered built-in MockStep")
@@ -517,15 +576,20 @@ def quick_test() -> Dict[str, Any]:
         test_results['summary']['total_tests'] += 1
         test_results['summary']['skipped'] += 1
     
-    # Test 3: Step registry functionality
+    # Test 3: Step registry functionality with register_step_safe
     if _STEP_REGISTRY_AVAILABLE:
         try:
             # Test basic registry operations
             initial_count = len(get_step_types())
             
-            # Test mock step registration
+            # Test mock step registration with register_step_safe
             if MockStep:
-                success = register_step_safe('test_registry_step', MockStep)
+                success = register_step_safe(
+                    step_type='test_registry_step',
+                    step_class=MockStep,
+                    category='testing',
+                    aliases=['test_step_alias']
+                )
                 if success:
                     # Test retrieval
                     types = get_step_types()
@@ -633,6 +697,7 @@ def print_status():
     print(f"Core Available: {_CORE_AVAILABLE}")
     print(f"BaseStep Available: {_BASE_STEP_AVAILABLE}")
     print(f"Registry Available: {_STEP_REGISTRY_AVAILABLE}")
+    print(f"Registry register_step_safe: {_REGISTRY_REGISTER_STEP_SAFE_AVAILABLE}")
     
     if _STEP_REGISTRY_AVAILABLE:
         try:
@@ -658,9 +723,15 @@ Quick Start:
 1. Import base classes: from orchestrator.steps.base import BaseStep, StepRegistry
 2. Create step class inheriting from BaseStep
 3. Implement execute() method returning Dict with 'status', 'outputs', 'metadata'
-4. Register step: register_step_safe('step_type', StepClass)
+4. Register step: register_step_safe('step_type', StepClass, category='your_category')
 5. Test with create_mock_step() or MockStep
 6. Use in JSON process definitions
+
+Key Fixes Applied:
+- Fixed register_step_safe() to properly handle category parameter
+- Enhanced error handling and fallback mechanisms
+- Improved import handling for step_registry components
+- Better debugging and status reporting
 
 Auto-Registration:
 - Call auto_register_step_modules() to discover and register all step modules

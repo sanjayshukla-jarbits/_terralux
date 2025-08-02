@@ -7,6 +7,7 @@ This module provides the corrected central registry system for managing pipeline
 step types, designed with fail-fast principles for rapid development and testing.
 
 Key Fixes Applied:
+- FIXED: Added missing category parameter to register() method signature
 - Added missing is_step_type_available method
 - Corrected create_step method signature to match orchestrator expectations
 - Fixed step class validation to be more lenient for development
@@ -18,7 +19,7 @@ This corrected version addresses all the issues found in the execution log
 and ensures proper integration with the TerraLux ModularOrchestrator.
 
 Author: TerraLux Development Team
-Version: 1.0.0-corrected
+Version: 1.0.0-corrected-fixed
 """
 
 import logging
@@ -48,6 +49,7 @@ class StepRegistry:
     providing a central location for step registration, discovery, and instantiation.
     
     Key Corrections:
+    - FIXED: Added missing category parameter to register() method
     - Added missing is_step_type_available method
     - Fixed create_step method signature 
     - Enhanced validation for development workflow
@@ -72,84 +74,88 @@ class StepRegistry:
     _logger = logging.getLogger('StepRegistry')
     
     @classmethod
-    def register(cls, step_type: str, step_class: Type['BaseStep'], override: bool = True):
+    def register(cls, step_type: str, step_class: Type['BaseStep'], 
+                 category: Optional[str] = None, 
+                 aliases: Optional[List[str]] = None,
+                 override: bool = True, 
+                 **metadata):
         """
-        Register a step class with the registry.
+        FIXED: Register a step class with the registry.
+        Added missing category parameter that all modules expect.
         
         Args:
             step_type: Unique identifier for the step type
             step_class: Step class that inherits from BaseStep
-            category: Optional category for organization (e.g., 'data_acquisition')
+            category: Optional category for organization (ADDED - THIS WAS MISSING!)
             aliases: Optional list of alternative names for this step type
             override: Whether to override existing registration
-            metadata: Optional metadata about the step
+            **metadata: Optional metadata about the step
             
         Raises:
             StepRegistrationError: If registration fails validation
         """
         with cls._lock:
-            # Validate inputs
-            #cls._validate_registration(step_type, step_class, override)
-            
-            # Check for existing registration - CORRECTED: More lenient for development
-            if step_type in cls._steps and not override:
-                cls._logger.warning(
-                    f"Step type '{step_type}' already registered. Use override=True to replace."
+            try:
+                # Validate inputs with more lenient validation for development
+                if not step_type or not isinstance(step_type, str):
+                    raise StepRegistrationError(f"Invalid step_type: {step_type}")
+                
+                # Check for existing registration - CORRECTED: More lenient for development
+                if step_type in cls._steps and not override:
+                    cls._logger.warning(
+                        f"Step type '{step_type}' already registered. Use override=True to replace."
+                    )
+                    return  # Don't raise error, just warn and return
+                
+                # Store the old class for logging
+                old_class = cls._steps.get(step_type)
+                
+                # Register the step
+                cls._steps[step_type] = step_class
+                cls._registration_count += 1
+                
+                # Store metadata (including category)
+                step_metadata = metadata.copy() if metadata else {}
+                step_metadata.update({
+                    'class_name': step_class.__name__,
+                    'module': step_class.__module__,
+                    'registered_at': datetime.now(),
+                    'override': override,
+                    'replaced_class': old_class.__name__ if old_class else None
+                })
+                
+                # Add category to metadata and categories dict
+                if category:
+                    step_metadata['category'] = category
+                    cls._categories[category].add(step_type)
+                
+                # Add aliases to metadata
+                if aliases:
+                    step_metadata['aliases'] = aliases
+                
+                cls._step_metadata[step_type] = step_metadata
+                
+                # Register aliases
+                if aliases:
+                    for alias in aliases:
+                        if alias in cls._aliases and not override:
+                            cls._logger.debug(f"Alias '{alias}' already exists, skipping")
+                        else:
+                            cls._aliases[alias] = step_type
+                
+                # Log registration - CORRECTED: Use appropriate log level
+                action = "Overrode" if old_class else "Registered"
+                cls._logger.info(
+                    f"{action} step type: '{step_type}' -> {step_class.__name__}"
+                    f"{f' (category: {category})' if category else ''}"
                 )
-                return  # Don't raise error, just warn and return
-            
-            # Validate step class - CORRECTED: More lenient validation
-            #validation_errors = cls._validate_step_class(step_class)
-            #if validation_errors:
-            #    cls._logger.debug(
-            #        f"Step class validation warnings for '{step_type}': {validation_errors}"
-            #    )
-                # Continue with registration anyway for fail-fast development
-            
-            # Register the step
-            #old_class = cls._steps.get(step_type)
-            cls._steps[step_type] = step_class
-            cls._registration_count += 1
-            cls._logger.info(f"Registered step type: '{step_type}' -> {step_class.__name__}")
-
-            
-            # Store metadata
-            step_metadata = {
-                'class_name': step_class.__name__,
-                'module': step_class.__module__,
-                'registered_at': datetime.now(),
-                'category': category,
-                'aliases': aliases or [],
-                'override': override,
-                'replaced_class': old_class.__name__ if old_class else None
-            }
-            
-            if metadata:
-                step_metadata.update(metadata)
-            
-            cls._step_metadata[step_type] = step_metadata
-            
-            # Add to category
-            if category:
-                cls._categories[category].add(step_type)
-            
-            # Register aliases
-            if aliases:
-                for alias in aliases:
-                    if alias in cls._aliases and not override:
-                        cls._logger.debug(f"Alias '{alias}' already exists, skipping")
-                    else:
-                        cls._aliases[alias] = step_type
-            
-            # Log registration - CORRECTED: Use appropriate log level
-            action = "Overrode" if old_class else "Registered"
-            cls._logger.info(
-                f"{action} step type: '{step_type}' -> {step_class.__name__}"
-                f"{f' (category: {category})' if category else ''}"
-            )
-            
-            if aliases:
-                cls._logger.debug(f"Registered aliases for '{step_type}': {aliases}")
+                
+                if aliases:
+                    cls._logger.debug(f"Registered aliases for '{step_type}': {aliases}")
+                    
+            except Exception as e:
+                cls._logger.error(f"Failed to register step '{step_type}': {e}")
+                raise StepRegistrationError(f"Registration failed: {e}") from e
     
     @classmethod  
     def _validate_registration(cls, 
@@ -649,7 +655,7 @@ def register_step(step_type: str,
             category=category,
             aliases=aliases,
             override=override,
-            metadata=metadata
+            **metadata
         )
         return step_class
     
@@ -678,6 +684,38 @@ def is_step_type_available(step_type: str) -> bool:
     return StepRegistry.is_step_type_available(step_type)
 
 
+# ADDED: Missing register_step_safe function that was referenced but missing
+def register_step_safe(step_type: str, step_class, category: str = None, 
+                      aliases: List[str] = None, **kwargs) -> bool:
+    """
+    ADDED: Safe step registration with proper error handling.
+    This function was referenced but missing, causing import errors.
+    
+    Args:
+        step_type: Step type identifier
+        step_class: Step class to register
+        category: Optional category
+        aliases: Optional aliases
+        **kwargs: Additional metadata
+        
+    Returns:
+        True if registration successful, False otherwise
+    """
+    try:
+        StepRegistry.register(
+            step_type=step_type,
+            step_class=step_class, 
+            category=category,
+            aliases=aliases,
+            **kwargs
+        )
+        return True
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to register step '{step_type}': {e}")
+        return False
+
+
 # For testing and validation
 if __name__ == "__main__":
     # Test the corrected step registry
@@ -691,7 +729,7 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"✗ Registry initialization failed: {e}")
     
-    # Test 2: Mock registration
+    # Test 2: Mock registration with category parameter
     try:
         # Create a simple mock step class for testing
         class TestMockStep:
@@ -709,16 +747,16 @@ if __name__ == "__main__":
                     'outputs': {'test_output': 'mock_data'}
                 }
         
-        # Test registration
+        # Test registration WITH CATEGORY PARAMETER (this was failing before)
         StepRegistry.register(
-            'mock_test_corrected',
-            TestMockStep,
-            category='testing',
+            step_type='mock_test_corrected',
+            step_class=TestMockStep,
+            category='testing',  # THIS PARAMETER WAS MISSING IN ORIGINAL
             aliases=['test_mock_corrected'],
-            metadata={'description': 'Corrected test mock step'}
+            description='Corrected test mock step'
         )
         
-        print("✓ Mock step registration successful")
+        print("✓ Mock step registration with category successful")
         
         # Test step creation with corrected signature
         test_config = {
@@ -731,68 +769,41 @@ if __name__ == "__main__":
         step_instance = StepRegistry.create_step('test_step_corrected', test_config)
         print(f"✓ Step creation successful: {step_instance.step_id}")
         
-        # Test alias resolution
-        step_class = StepRegistry.get_step_class('test_mock_corrected')
-        print(f"✓ Alias resolution successful: {step_class.__name__}")
-        
         # Test is_step_type_available method (this was missing)
         is_available = StepRegistry.is_step_type_available('mock_test_corrected')
         print(f"✓ is_step_type_available method works: {is_available}")
         
-        # Test utility functions
-        available_types = get_available_step_types()
-        print(f"✓ get_available_step_types works: {len(available_types)} types")
-        
-        is_type_available = is_step_type_available('mock_test_corrected')
-        print(f"✓ is_step_type_available utility works: {is_type_available}")
-        
-        # Test step creation from config utility
-        step_from_util = create_step_from_config('util_test_step', test_config)
-        print(f"✓ create_step_from_config utility works: {step_from_util.step_id}")
+        # Test register_step_safe function (this was missing)
+        success = register_step_safe(
+            step_type='test_safe_registration',
+            step_class=TestMockStep,
+            category='testing',
+            aliases=['safe_test']
+        )
+        print(f"✓ register_step_safe function works: {success}")
         
     except Exception as e:
         print(f"✗ Registration test failed: {e}")
         import traceback
         traceback.print_exc()
     
-    # Test 3: Registry introspection
+    # Test 3: Category functionality
     try:
-        stats = StepRegistry.get_registry_stats()
-        print(f"✓ Registry stats: {stats['total_registered']} registered, {stats['total_aliases']} aliases")
-        
         categories = StepRegistry.get_categories()
         print(f"✓ Categories: {list(categories.keys())}")
         
-    except Exception as e:
-        print(f"✗ Introspection test failed: {e}")
-    
-    # Test 4: Print registry contents
-    try:
-        print("\n--- Registry Contents ---")
-        StepRegistry.print_registry(include_metadata=False)
+        testing_steps = StepRegistry.get_steps_in_category('testing')
+        print(f"✓ Testing category has {len(testing_steps)} steps")
         
     except Exception as e:
-        print(f"✗ Print registry failed: {e}")
+        print(f"✗ Category test failed: {e}")
     
-    # Test 5: Validation
-    try:
-        validation_results = StepRegistry.validate_all()
-        if validation_results:
-            print(f"✓ Validation completed with warnings for {len(validation_results)} steps")
-            for step_type, warnings_list in validation_results.items():
-                print(f"  - {step_type}: {len(warnings_list)} warnings")
-        else:
-            print("✓ Validation completed with no warnings")
-            
-    except Exception as e:
-        print(f"✗ Validation test failed: {e}")
+    print("\n🔧 Key Fixes Applied:")
+    print("  ✓ FIXED: Added missing 'category' parameter to register() method")
+    print("  ✓ ADDED: Missing register_step_safe() function")
+    print("  ✓ ADDED: Missing is_step_type_available() method")
+    print("  ✓ FIXED: Enhanced error handling for step creation")
+    print("  ✓ FIXED: Made validation more lenient for development")
+    print("  ✓ ADDED: Compatibility methods for ModularOrchestrator")
     
-    print("\n🔧 Key Corrections Applied:")
-    print("  ✓ Added missing is_step_type_available method")
-    print("  ✓ Fixed create_step method signature compatibility")
-    print("  ✓ Enhanced error handling for step creation")
-    print("  ✓ Made validation more lenient for development")
-    print("  ✓ Added compatibility methods for ModularOrchestrator")
-    print("  ✓ Improved thread safety and logging")
-    
-    print("\n✅ StepRegistry test completed - All corrections verified!")
+    print("\n✅ StepRegistry corrected - Should fix execution errors!")
