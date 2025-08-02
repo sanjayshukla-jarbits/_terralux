@@ -100,8 +100,8 @@ class SentinelHubAcquisitionStep(BaseStep):
         
         # Configuration from hyperparameters
         self.data_collection = self.hyperparameters.get('data_collection', 'SENTINEL-2-L2A')
-        self.resolution = self.hyperparameters.get('resolution', 10)
-        self.bands = self.hyperparameters.get('bands', ['B02', 'B03', 'B04', 'B05', 'B06', 'B07', 'B08', 'B08A', 'B11', 'B12'])
+        self.resolution = self.hyperparameters.get('resolution', 10)        
+        self.bands = self.hyperparameters.get('bands', ['B02', 'B03', 'B04', 'B05', 'B06', 'B07', 'B08', 'B8A', 'B11', 'B12'])
         self.max_cloud_coverage = self.hyperparameters.get('max_cloud_coverage', 20)
         
         # API configuration
